@@ -1,26 +1,221 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ink: #070c0b;
+  --panel: #101816;
+  --paper: #e7ece6;
+  --mist: #8f9d96;
+  --line: #24332c;
+  --accent: #b7f3a2;
+  --danger: #e7a39c;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-ink: var(--ink);
+  --color-panel: var(--panel);
+  --color-paper: var(--paper);
+  --color-mist: var(--mist);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-dm), "DM Sans", sans-serif;
+  --font-display: var(--font-display-family), "Space Grotesk", sans-serif;
+  --font-mono: var(--font-mono-family), "Space Mono", ui-monospace, monospace;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+select,
+textarea {
+  color-scheme: dark;
+  font: inherit;
+}
+
+#post-body {
+  min-height: 28rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--line);
+  background: var(--ink);
+  padding: 0.75rem 1rem;
+  color: var(--paper);
+  font-size: 0.875rem;
+  line-height: 1.7;
+  outline: none;
+}
+
+#post-body:focus {
+  border-color: var(--accent);
+}
+
+#post-body a {
+  color: var(--accent);
+}
+
+#post-body blockquote {
+  border-left: 2px solid var(--line);
+  color: var(--mist);
+  margin-left: 0;
+  padding-left: 0.8rem;
+}
+
+#post-body pre {
+  background: var(--panel);
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  padding: 0.75rem 0.9rem;
+}
+
+#post-body code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+
+#post-body ul.task-list {
+  list-style: none;
+  padding-left: 0.2rem;
+}
+
+#post-body ul.task-list li {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+#post-body ul.task-list input {
+  margin-top: 0.45rem;
+}
+
+#post-body .token.comment,
+#post-body .token.prolog,
+#post-body .token.doctype {
+  color: #6d7c74;
+}
+
+#post-body .token.keyword,
+#post-body .token.operator {
+  color: #b7f3a2;
+}
+
+#post-body .token.string,
+#post-body .token.attr-value {
+  color: #e7d3a1;
+}
+
+#post-body .token.number,
+#post-body .token.boolean {
+  color: #e7a39c;
+}
+
+#post-body .token.function,
+#post-body .token.class-name {
+  color: #9ec9e8;
+}
+
+.tox-tinymce-inline {
+  z-index: 30;
+}
+
+.blog-preview-body h2 {
+  margin: 1.6rem 0 0.5rem;
+  font-family: var(--font-display);
+  font-size: 1.7rem;
+  line-height: 1.2;
+}
+
+.blog-preview-body h3 {
+  margin: 1.3rem 0 0.4rem;
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+}
+
+.blog-preview-body h4 {
+  margin: 1.1rem 0 0.35rem;
+  font-size: 1.05rem;
+}
+
+.blog-preview-body p,
+.blog-preview-body ul,
+.blog-preview-body ol,
+.blog-preview-body blockquote,
+.blog-preview-body pre {
+  margin: 0.8rem 0;
+}
+
+.blog-preview-body ul,
+.blog-preview-body ol {
+  padding-left: 1.25rem;
+}
+
+.blog-preview-body ul {
+  list-style: disc;
+}
+
+.blog-preview-body ol {
+  list-style: decimal;
+}
+
+.blog-preview-body a {
+  color: #bcf3a4;
+}
+
+.blog-preview-body blockquote {
+  border-left: 2px solid #26372f;
+  color: #89968f;
+  padding-left: 0.9rem;
+}
+
+.blog-preview-body pre {
+  overflow-x: auto;
+  border-radius: 0.5rem;
+  background: #111a17;
+  padding: 0.9rem 1rem;
+}
+
+.blog-preview-body code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.blog-preview-body .token.comment,
+.blog-preview-body .token.prolog {
+  color: #6d7c74;
+}
+
+.blog-preview-body .token.keyword,
+.blog-preview-body .token.operator {
+  color: #bcf3a4;
+}
+
+.blog-preview-body .token.string,
+.blog-preview-body .token.attr-value {
+  color: #e7d3a1;
+}
+
+.blog-preview-body .token.function,
+.blog-preview-body .token.class-name {
+  color: #9ec9e8;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--ink);
 }

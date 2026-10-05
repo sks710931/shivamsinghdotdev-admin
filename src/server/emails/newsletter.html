@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>{{title}}</title>
+  </head>
+  <body style="margin:0;padding:0;background:#0b1110;">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;">
+      {{excerpt}}
+    </div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0b1110;margin:0;padding:0;">
+      <tr>
+        <td align="center" style="padding:32px 16px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#111a17;border:1px solid #26372f;">
+            <tr>
+              <td style="padding:28px 32px 8px;font-family:Consolas,Courier New,monospace;font-size:12px;letter-spacing:0.18em;color:#bcf3a4;">
+                shivamsingh.dev
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:4px 32px 0;font-family:Consolas,Courier New,monospace;font-size:12px;letter-spacing:0.14em;color:#89968f;">
+                Newsletter
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:16px 32px 0;font-family:Georgia,Times New Roman,serif;font-size:36px;line-height:1.15;color:#e6eae4;">
+                {{title}}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:20px 32px 0;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.7;color:#89968f;">
+                {{excerpt}}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:28px 32px 8px;">
+                <table role="presentation" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td style="background:#bcf3a4;">
+                      <a href="{{postUrl}}" style="display:inline-block;padding:14px 22px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700;letter-spacing:0.04em;color:#0b1110;text-decoration:none;">
+                        Read the post
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:8px 32px 28px;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;color:#89968f;">
+                Or copy this link into your browser:<br />
+                <a href="{{postUrl}}" style="color:#bcf3a4;word-break:break-all;">{{postUrl}}</a>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:18px 32px 24px;border-top:1px solid #26372f;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.6;color:#65776d;">
+                You received this because you follow the blog on shivamsingh.dev.
+                <br />
+                shivamsingh.dev · {{year}}
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
