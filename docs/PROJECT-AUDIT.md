@@ -70,7 +70,7 @@
 - Reuse `assertSameOrigin` + JSON content-type check for all new mutations; app shell for new pages.
 
 ## 8. Architectural recommendations
-- **ADR-0001 (proposed, Nexus): publishing boundary.** Admin app is the only writer and schema owner. It exposes a read-only public API — `GET /api/public/posts`, `GET /api/public/posts/[slug]` — published rows only, already-sanitised HTML, cache headers. Public site renders with time-based **ISR** plus an on-demand revalidate webhook fired on publish/unpublish. Rejected: public site reading SQL directly (shared schema + DB credential); static export into the public repo (commit per publish, awkward unpublish). Revisit if a second consumer appears or public-API availability becomes a problem. Open: Sentinel to test stale-cache of unpublished posts when the webhook fails.
+- **ADR-0001 (accepted): publishing boundary.** Read-only public API in the admin app + ISR with revalidate webhook; see [ADR-0001](decisions/ADR-0001-public-content-boundary.md).
 - **Shared article stylesheet:** one `article.css` scoped under `.article`, used by admin preview and public site. Owner: Pixel.
 - **Media storage interface:** local disk in dev, Azure Blob in prod. **Azure Blob is a paid resource and needs Founder approval** before slice 4.
 - Stay a modular monolith; no extra services. Publish-revision must be a single transaction with a `RowVersion` check on the live row (Nexus).
@@ -83,6 +83,8 @@
 | 2 | **Local-first; Azure parked** until the app runs end to end locally. `DATABASE_URL`/`ADMIN_*` are not set in Azure | **Founder confirmed** |
 | 3 | **Guest rule:** guests create articles as guest author and view/edit only their own; admins see/edit all; only admins publish, unpublish, delete (archive). Other authors' posts return 404 to guests | **Founder confirmed** |
 | 4 | Guest edits to published posts become a **pending revision** (`PostRevision` table); live row unchanged until an admin publishes | **Founder confirmed** |
+| 4a | **ADR-0001 — Accepted:** public read API + ISR boundary. See [ADR-0001](decisions/ADR-0001-public-content-boundary.md) | Nexus, team |
+| 4b | **ADR-0002 — Accepted:** every edit to a published post, including admin edits, goes to the pending revision; only Publish applies it. See [ADR-0002](decisions/ADR-0002-published-edits-via-revision.md) | Sentinel, team; Founder confirmed rule |
 | 5 | Server-side sanitiser (`sanitize-html`) on **every save, every role**. Allow-list: `p`, `h2`–`h4`, `strong`, `em`, `s`, `code`, `pre`, `blockquote`, `ul`/`ol`/`li`, `table` + children, `hr`, `br`, `a`, `img`, `figure`, `figcaption`, **`mark`**; `href` http/https/mailto with forced `rel="noopener noreferrer"`; `img` `src` (https or own media origin), `alt`, `width`, `height`; `class` only `language-*` (on **`pre` and `code`**) or `task-list`; **`input type=checkbox` only inside `ul.task-list > li`**, attrs `checked`/`disabled`, `disabled` forced. Strip all `on*`, `style`, `iframe`, `svg`, `form`, `object`, `embed`. Editor drops underline/sub/sup/alignment; highlight → `mark` | Sentinel + Pixel + Forge |
 | 6 | Versioned migrations (`db/migrations/*.sql`, `SchemaVersion` table) via `pnpm db:migrate`, idempotent, run as explicit step; app stops running DDL | Forge + Pulse |
 | 7 | Local env: one shared SQL Server 2022 container (2 GB cap), one database per agent, `pnpm dev:local`, random SA password in gitignored `.env.local` | Pulse, approved by Atlas |
@@ -91,7 +93,7 @@
 
 ## 10. Prioritized slices
 1. **Editing + roles + sanitiser + migrations**
-   - Forge (`feat/posts-slice1-backend`): migrations baseline + 0002 (`RowVersion`, `PublishedAt`, archived + `CHECK`, `(Status, PublishedAt)` index), `PostRevision`, endpoints per `FORGE-slice1-contract.md` (GET list/by id, PATCH with `version`, revision GET/DELETE, publish, unpublish, archive DELETE), error shapes `400/403 forbidden/404 not_found/409 stale_version|slug_taken`, sanitiser.
+   - Forge (`feat/posts-slice1-backend`): migrations baseline + 0002 (`RowVersion`, `PublishedAt`, archived + `CHECK`, `(Status, PublishedAt)` index), `PostRevision` (all edits to published posts, admin included, go to the revision per ADR-0002), endpoints per `FORGE-slice1-contract.md` (GET list/by id, PATCH with `version`, revision GET/DELETE, publish, unpublish, archive DELETE), error shapes `400/403 forbidden/404 not_found/409 stale_version|slug_taken`, sanitiser.
    - Pixel: edit mode, linked list rows, Save draft / Publish (confirm) / Unpublish, guest "Submit for review" + live-unchanged banner, admin "Pending review" filter and side-by-side revision view, editor toolbar trimmed to the allow-list.
    - Sentinel: gates and tests below.
    - Pulse (`chore/local-env-ci`): `pnpm dev:local`, `.env.example`, PR checks workflow (lint, typegen+tsc, tests, build), fix `api_location`, checkout version, Node pin.
@@ -102,7 +104,10 @@
 
 ### Slice 1 acceptance criteria (Sentinel)
 - Guest gets **404** reading or patching another author's post, and **403** on publish/unpublish/delete.
-- Guest edit to a published post leaves the live `BlogPost` row **byte-identical** and creates/updates one pending `PostRevision`.
+- Any edit to a published post (guest **or admin**) leaves the live `BlogPost` row **byte-identical** and creates/updates one pending `PostRevision`.
+- Admin edit to a published post leaves the live row unchanged until Publish.
+- Publishing a stale revision (live post changed since revision base) without `force: true` returns **409 `revision_stale`**.
+- Archived posts never appear in the public API, and their slugs stay reserved.
 - Guest cannot set `Status`, `AuthorId`, `PublishedAt`, or the slug of a published post (allow-listed PATCH fields only).
 - Stale `version` returns **409 `stale_version`**; slug collision returns **409 `slug_taken`**.
 - XSS payload corpus is neutralised on both save and render.
