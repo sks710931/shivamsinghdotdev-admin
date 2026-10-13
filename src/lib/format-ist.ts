@@ -15,6 +15,14 @@ function clean(value: string): string {
   return value.replace(/[\u202f\u00a0]/g, " ");
 }
 
+export function formatIstClock(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return clean(CLOCK.format(date)).trim();
+}
+
 export function formatIstDateTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) {
@@ -24,9 +32,6 @@ export function formatIstDateTime(iso: string): string {
 }
 
 export function formatSavedIst(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) {
-    return "Saved";
-  }
-  return `Saved ${clean(CLOCK.format(date)).trim()} IST`;
+  const clock = formatIstClock(iso);
+  return clock ? `Saved ${clock} IST` : "Saved";
 }
