@@ -89,6 +89,12 @@ textarea {
   font-size: 0.85em;
 }
 
+#post-body mark,
+.blog-preview-body mark {
+  background: #314232;
+  color: inherit;
+}
+
 #post-body ul.task-list {
   list-style: none;
   padding-left: 0.2rem;
