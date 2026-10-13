@@ -11,7 +11,20 @@ import { PostEditor } from "./post-editor";
 type LoadState =
   | { kind: "loading" }
   | { kind: "error"; error: ApiError }
-  | { kind: "ready"; post: PostDetail; revision: RevisionDetail | null; revisionWarning: string | null };
+  | { kind: "ready"; post: PostDetail; revision: RevisionDetail | null; savedAt: string | null };
+
+function readSavedStamp(postId: string): string | null {
+  try {
+    const key = `desk-post-saved:${postId}`;
+    const value = sessionStorage.getItem(key);
+    if (value) {
+      sessionStorage.removeItem(key);
+    }
+    return value;
+  } catch {
+    return null;
+  }
+}
 
 export function EditPostScreen({ postId, role }: { postId: string; role: UserRole }) {
   const [attempt, setAttempt] = useState(0);
@@ -24,17 +37,27 @@ export function EditPostScreen({ postId, role }: { postId: string; role: UserRol
       try {
         const post = await api.getPost(postId);
         let revision: RevisionDetail | null = null;
-        let revisionWarning: string | null = null;
         if (post.pendingRevision) {
           try {
             revision = await api.getRevision(postId);
           } catch (error: unknown) {
-            revisionWarning =
-              error instanceof ApiError ? error.error : "The pending revision could not be loaded.";
+            if (cancelled) {
+              return;
+            }
+            const apiError =
+              error instanceof ApiError && error.code !== "not_found"
+                ? error
+                : new ApiError({
+                    status: error instanceof ApiError ? error.status : 500,
+                    error: "The pending revision could not be loaded.",
+                    code: "unknown",
+                  });
+            setState({ kind: "error", error: apiError });
+            return;
           }
         }
         if (!cancelled) {
-          setState({ kind: "ready", post, revision, revisionWarning });
+          setState({ kind: "ready", post, revision, savedAt: readSavedStamp(postId) });
         }
       } catch (error: unknown) {
         if (cancelled) {
@@ -90,7 +113,7 @@ export function EditPostScreen({ postId, role }: { postId: string; role: UserRol
       role={role}
       initialPost={state.post}
       initialRevision={state.revision}
-      initialNotice={state.revisionWarning}
+      initialSavedAt={state.savedAt}
     />
   );
 }

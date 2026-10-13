@@ -1,7 +1,7 @@
 "use client";
 
 import { Editor } from "@tinymce/tinymce-react";
-import { Clock3, Eye, FileText, Globe2, Link2, Plus, Save, Search, Send, X } from "lucide-react";
+import { Clock3, FileText, Globe2, Link2, Plus, Search, Send, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Prism from "prismjs";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -26,15 +26,17 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PostStatusBadge } from "@/components/post-status-badge";
 import type { UserRole } from "@/lib/directory";
 import { normalizeEditorHtml } from "@/lib/editor-html";
-import { formatIstClock, formatIstDateTime, formatSavedIst } from "@/lib/format-ist";
-import { getPostActions, type PostActionVisibility } from "@/lib/post-actions";
+import { formatIstDateTime, formatSavedIst } from "@/lib/format-ist";
+import { getPostActions } from "@/lib/post-actions";
 import {
   ApiError,
   getPostsApi,
   type PostDetail,
   type RevisionDetail,
 } from "@/lib/posts-client";
+import { EditorActions, LiveUnchangedNotice } from "./editor-actions";
 import { PostMissing } from "./post-missing";
+import { RevisionReview } from "./revision-review";
 import {
   createEditorInit,
   defaultToolbar,
@@ -104,13 +106,13 @@ const confirmCopy: Record<
   },
   archive: {
     title: "Archive this post?",
-    description: "It leaves the public site. The URL slug stays reserved.",
+    description: "It leaves the public site. The URL slug stays reserved. Unsaved edits on this page are discarded.",
     confirmLabel: "Archive",
     tone: "danger",
   },
   discard: {
     title: "Discard this revision?",
-    description: "The pending edit is deleted. The live post stays as it is.",
+    description: "The pending edit is deleted. The live post stays as it is. Unsaved edits in the editor are discarded with it.",
     confirmLabel: "Discard",
     tone: "danger",
   },
@@ -208,12 +210,14 @@ export function PostEditor({
   initialPost,
   initialRevision = null,
   initialNotice = null,
+  initialSavedAt = null,
 }: {
   mode: "create" | "edit";
   role: UserRole;
   initialPost?: PostDetail;
   initialRevision?: RevisionDetail | null;
   initialNotice?: string | null;
+  initialSavedAt?: string | null;
 }) {
   const router = useRouter();
   const starting = initialPost ? fieldsFrom(initialPost, initialRevision) : emptyFields();
@@ -228,7 +232,7 @@ export function PostEditor({
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [conflict, setConflict] = useState<ApiError | null>(null);
   const [revisionStale, setRevisionStale] = useState<ApiError | null>(null);
-  const [savedLabel, setSavedLabel] = useState<string | null>(null);
+  const [savedLabel, setSavedLabel] = useState<string | null>(initialSavedAt ? formatSavedIst(initialSavedAt) : null);
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null);
   const [missing, setMissing] = useState(false);
   const [tagDraft, setTagDraft] = useState("");
@@ -271,7 +275,12 @@ export function PostEditor({
       return;
     }
     if (previewOpen && !dialog.open) {
-      dialog.showModal();
+      try {
+        dialog.showModal();
+      } catch {
+        dialog.setAttribute("open", "");
+      }
+      dialog.querySelector<HTMLElement>("[data-autofocus]")?.focus();
     } else if (!previewOpen && dialog.open) {
       dialog.close();
     }
@@ -381,6 +390,7 @@ export function PostEditor({
         setBanner("Saved. This page is staying open because the post read API is not available yet.");
       }
       if (detail && options?.navigate !== false) {
+        sessionStorage.setItem(`desk-post-saved:${detail.id}`, adopted.updatedAt || now);
         router.replace(`/posts/${detail.id}`);
       }
       return { post: adopted, revision: null };
@@ -539,14 +549,17 @@ export function PostEditor({
 
   function archive() {
     void run(async () => {
-      const model = dirty || !post ? await persist({ navigate: false }) : { post, revision };
-      await getPostsApi().archivePost(model.post.id, { version: model.post.version });
+      if (!post) {
+        setBanner("Save the post before archiving it.");
+        return;
+      }
+      await getPostsApi().archivePost(post.id, { version: post.version });
       try {
-        const fresh = await getPostsApi().getPost(model.post.id);
-        const nextRevision = fresh.pendingRevision ? await getPostsApi().getRevision(model.post.id) : null;
+        const fresh = await getPostsApi().getPost(post.id);
+        const nextRevision = fresh.pendingRevision ? await getPostsApi().getRevision(post.id) : null;
         applyLoaded(fresh, nextRevision);
       } catch {
-        setPost({ ...model.post, status: "archived" });
+        applyLoaded({ ...post, status: "archived" }, revision);
       }
       setFieldErrors({});
     }, "The post could not be archived.");
@@ -623,7 +636,7 @@ export function PostEditor({
     } else if (kind === "tasks") {
       toggleTaskList(editor);
     } else if (kind === "code") {
-      editor.execCommand("codesample");
+      editor.execCommand("CodeSample");
     } else if (kind === "rule") {
       editor.execCommand("InsertHorizontalRule");
     } else if (kind === "image") {
@@ -680,11 +693,7 @@ export function PostEditor({
         <p className="mt-3 text-sm text-mist">Draft and edit content inline before publishing.</p>
       </header>
 
-      {actions.guestLiveBanner ? (
-        <p className="rounded-lg border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-paper">
-          Live version unchanged until an admin publishes your edits
-        </p>
-      ) : null}
+      {actions.guestLiveBanner ? <LiveUnchangedNotice /> : null}
       {post?.status === "archived" ? (
         <p className="rounded-lg border border-line bg-panel px-3 py-2 text-sm text-mist">
           This post is archived. The URL slug stays reserved and it is not on the public site.
@@ -701,7 +710,7 @@ export function PostEditor({
           {conflict.updatedBy || conflict.updatedAt ? (
             <p className="mt-1">
               {conflict.updatedBy ? `Updated by ${conflict.updatedBy}` : "Updated"}
-              {conflict.updatedAt ? ` at ${formatIstClock(conflict.updatedAt)} IST` : ""}.
+              {conflict.updatedAt ? ` at ${formatIstDateTime(conflict.updatedAt)}` : ""}. Reload discards unsaved edits.
             </p>
           ) : null}
           <button
@@ -726,58 +735,23 @@ export function PostEditor({
         </div>
       ) : null}
 
-      {role === "admin" && post?.pendingRevision && revision ? (
-        <section aria-label="Pending revision" className="rounded-2xl border border-line bg-panel p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-medium text-paper">Pending review</h3>
-              <p className="mt-1 text-xs text-mist">
-                {post.pendingRevision.authorName || "An editor"} updated this revision
-                {post.pendingRevision.updatedAt ? ` · ${formatIstDateTime(post.pendingRevision.updatedAt)}` : ""}.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={pending}
-                onClick={askUpdate}
-                className="inline-flex h-10 items-center rounded-lg bg-accent px-3 text-sm font-semibold text-ink disabled:opacity-50"
-              >
-                Publish revision
-              </button>
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => setConfirm("discard")}
-                className="inline-flex h-10 items-center rounded-lg border border-danger/40 px-3 text-sm text-danger disabled:opacity-50"
-              >
-                Discard
-              </button>
-            </div>
-          </div>
-          {revision.liveChangedSinceBase ? (
-            <p className="mt-3 text-sm text-danger">
-              The live post changed after this revision was started. Publishing asks you to confirm an overwrite.
-            </p>
-          ) : null}
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <article className="rounded-xl border border-line bg-ink p-4">
-              <h4 className="text-xs tracking-wide text-mist uppercase">Live</h4>
-              <h5 className="mt-2 font-display text-2xl text-paper">{post.title}</h5>
-              {post.summary ? <p className="mt-2 text-sm text-mist">{post.summary}</p> : null}
-              <div className="blog-preview-body mt-4 text-sm" dangerouslySetInnerHTML={{ __html: previewHtml(post.bodyHtml) }} />
-            </article>
-            <article className="rounded-xl border border-line bg-ink p-4">
-              <h4 className="text-xs tracking-wide text-mist uppercase">Pending</h4>
-              <h5 className="mt-2 font-display text-2xl text-paper">{revision.title}</h5>
-              {revision.summary ? <p className="mt-2 text-sm text-mist">{revision.summary}</p> : null}
-              <div
-                className="blog-preview-body mt-4 text-sm"
-                dangerouslySetInnerHTML={{ __html: previewHtml(revision.bodyHtml) }}
-              />
-            </article>
-          </div>
-        </section>
+      {post?.pendingRevision && revision ? (
+        <RevisionReview
+          role={role}
+          status={post.status}
+          liveTitle={post.title}
+          liveSummary={post.summary}
+          liveHtml={post.bodyHtml}
+          pendingTitle={revision.title}
+          pendingSummary={revision.summary}
+          pendingHtml={revision.bodyHtml}
+          pendingAuthor={post.pendingRevision.authorName}
+          pendingUpdatedAt={post.pendingRevision.updatedAt}
+          liveChangedSinceBase={revision.liveChangedSinceBase}
+          busy={pending}
+          onPublish={askUpdate}
+          onDiscard={() => setConfirm("discard")}
+        />
       ) : null}
 
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22.5rem]">
@@ -1066,7 +1040,7 @@ export function PostEditor({
         </aside>
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-panel/95 px-3 py-3 backdrop-blur xl:hidden">
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-panel/95 px-3 py-3 backdrop-blur lg:left-60 xl:hidden">
         <EditorActions
           layout="bar"
           pending={pending}
@@ -1131,6 +1105,7 @@ export function PostEditor({
           <p className="font-mono text-[11px] tracking-[0.18em] text-[#bcf3a4] uppercase">Preview</p>
           <button
             type="button"
+            data-autofocus
             onClick={() => setPreviewOpen(false)}
             className="h-9 rounded-lg border border-[#26372f] px-3 text-sm text-[#e6eae4]"
           >
@@ -1171,81 +1146,5 @@ function FieldError({ id, message }: { id: string; message?: string }) {
     <p id={id} className="text-xs text-danger">
       {message}
     </p>
-  );
-}
-
-function EditorActions({
-  layout,
-  pending,
-  savedLabel,
-  actions,
-  canArchive,
-  canUpdate,
-  onSave,
-  onPublish,
-  onUpdate,
-  onUnpublish,
-  onArchive,
-  onPreview,
-}: {
-  layout: "stack" | "bar";
-  pending: boolean;
-  savedLabel: string | null;
-  actions: PostActionVisibility;
-  canArchive: boolean;
-  canUpdate: boolean;
-  onSave: () => void;
-  onPublish: () => void;
-  onUpdate: () => void;
-  onUnpublish: () => void;
-  onArchive: () => void;
-  onPreview: () => void;
-}) {
-  const stack = layout === "stack";
-  const primary = stack
-    ? "inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-accent text-sm font-semibold text-ink transition-[filter] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-    : "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-accent px-3 text-sm font-semibold text-ink disabled:opacity-50";
-  const secondary = stack
-    ? "mt-2 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-line text-sm text-paper transition-colors hover:border-paper/30 disabled:opacity-50"
-    : "inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-line px-3 text-sm text-paper disabled:opacity-50";
-  const danger = stack
-    ? "mt-2 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-danger/40 text-sm text-danger disabled:opacity-50"
-    : "inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-danger/40 px-3 text-sm text-danger disabled:opacity-50";
-  const saveLabel = actions.saveDraft ? "Save draft" : "Save";
-
-  return (
-    <div className={stack ? "flex flex-col" : "flex flex-wrap items-center justify-end gap-2"}>
-      {savedLabel ? <p className={stack ? "mb-3 text-sm text-accent" : "mr-auto text-xs text-accent"}>{savedLabel}</p> : null}
-      {actions.save || actions.saveDraft ? (
-        <button type="button" disabled={pending} onClick={onSave} className={primary}>
-          <Save className="h-4 w-4" strokeWidth={1.75} />
-          {pending ? "Saving" : saveLabel}
-        </button>
-      ) : null}
-      {actions.publish ? (
-        <button type="button" disabled={pending} onClick={onPublish} className={secondary}>
-          Publish
-        </button>
-      ) : null}
-      {canUpdate ? (
-        <button type="button" disabled={pending} onClick={onUpdate} className={secondary}>
-          Update live post
-        </button>
-      ) : null}
-      {actions.unpublish ? (
-        <button type="button" disabled={pending} onClick={onUnpublish} className={secondary}>
-          Unpublish
-        </button>
-      ) : null}
-      {canArchive ? (
-        <button type="button" disabled={pending} onClick={onArchive} className={danger}>
-          Archive
-        </button>
-      ) : null}
-      <button type="button" onClick={onPreview} className={secondary}>
-        <Eye className="h-4 w-4" strokeWidth={1.75} />
-        Preview
-      </button>
-    </div>
   );
 }
