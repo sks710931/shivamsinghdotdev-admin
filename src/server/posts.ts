@@ -2,6 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
+import { getCurrentUser } from "@/server/auth";
 import { AuthError } from "@/server/auth-error";
 import { sql, query } from "@/server/db";
 
@@ -59,28 +60,197 @@ export async function ensurePostSchema(): Promise<void> {
         AuthorId uniqueidentifier NOT NULL,
         CreatedAt datetimeoffset NOT NULL CONSTRAINT DF_BlogPost_CreatedAt DEFAULT SYSUTCDATETIME(),
         UpdatedAt datetimeoffset NOT NULL CONSTRAINT DF_BlogPost_UpdatedAt DEFAULT SYSUTCDATETIME(),
+        PublishedAt datetimeoffset NULL,
         CONSTRAINT UQ_BlogPost_Slug UNIQUE (Slug),
         CONSTRAINT FK_BlogPost_Author FOREIGN KEY (AuthorId) REFERENCES dbo.AdminUser (Id)
       );
       CREATE INDEX IX_BlogPost_UpdatedAt ON dbo.BlogPost (UpdatedAt DESC);
     END
   `);
+
+  await query(`
+    IF COL_LENGTH(N'dbo.BlogPost', N'PublishedAt') IS NULL
+      ALTER TABLE dbo.BlogPost ADD PublishedAt datetimeoffset NULL;
+  `);
+
+  await query(`
+    IF OBJECT_ID(N'dbo.PostRevision', N'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.PostRevision (
+        Id uniqueidentifier NOT NULL CONSTRAINT PK_PostRevision PRIMARY KEY,
+        PostId uniqueidentifier NOT NULL,
+        AuthorId uniqueidentifier NOT NULL,
+        Title nvarchar(200) NOT NULL,
+        Slug varchar(180) NOT NULL,
+        Summary nvarchar(500) NOT NULL CONSTRAINT DF_PostRevision_Summary DEFAULT N'',
+        Tags nvarchar(500) NOT NULL CONSTRAINT DF_PostRevision_Tags DEFAULT N'',
+        SeoTitle nvarchar(200) NOT NULL CONSTRAINT DF_PostRevision_SeoTitle DEFAULT N'',
+        SeoKeywords nvarchar(500) NOT NULL CONSTRAINT DF_PostRevision_SeoKeywords DEFAULT N'',
+        BodyHtml nvarchar(max) NOT NULL,
+        State varchar(20) NOT NULL,
+        BaseVersion bigint NOT NULL CONSTRAINT DF_PostRevision_BaseVersion DEFAULT 0,
+        RowVersion bigint NOT NULL CONSTRAINT DF_PostRevision_RowVersion DEFAULT 0,
+        CreatedAt datetimeoffset NOT NULL CONSTRAINT DF_PostRevision_CreatedAt DEFAULT SYSUTCDATETIME(),
+        UpdatedAt datetimeoffset NOT NULL CONSTRAINT DF_PostRevision_UpdatedAt DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT FK_PostRevision_Post FOREIGN KEY (PostId) REFERENCES dbo.BlogPost (Id),
+        CONSTRAINT FK_PostRevision_Author FOREIGN KEY (AuthorId) REFERENCES dbo.AdminUser (Id),
+        CONSTRAINT CK_PostRevision_State CHECK (State IN ('pending', 'published', 'discarded'))
+      );
+      CREATE UNIQUE INDEX UX_PostRevision_OnePending ON dbo.PostRevision (PostId) WHERE State = 'pending';
+    END
+  `);
 }
 
-export async function listPosts(): Promise<BlogPostSummary[]> {
+export type ListPostStatus = PostStatus | "archived";
+
+export type ListPostsOptions = {
+  status?: ListPostStatus;
+  pending?: boolean;
+  page?: number;
+  pageSize?: number;
+  authorId?: string;
+};
+
+export type BlogPostListItem = {
+  id: string;
+  title: string;
+  slug: string;
+  status: ListPostStatus;
+  hasPendingRevision: boolean;
+  authorName: string;
+  updatedAt: string;
+  publishedAt: string | null;
+};
+
+const PENDING_REVISION = `EXISTS (
+  SELECT 1
+  FROM dbo.PostRevision AS r
+  WHERE r.PostId = p.Id AND r.State = 'pending'
+)`;
+
+function timestamp(value: unknown): string {
+  const date = value instanceof Date ? value : new Date(String(value ?? ""));
+  return date.toISOString();
+}
+
+function timestampOrNull(value: unknown): string | null {
+  if (value == null || value === "") {
+    return null;
+  }
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function listStatus(value: unknown): ListPostStatus {
+  if (value === "published" || value === "archived" || value === "draft") {
+    return value;
+  }
+  return "draft";
+}
+
+function flag(value: unknown): boolean {
+  return value === true || value === 1 || value === "1";
+}
+
+export async function listPosts(): Promise<BlogPostListItem[]>;
+export async function listPosts(options: ListPostsOptions): Promise<{ items: BlogPostListItem[]; total: number }>;
+export async function listPosts(
+  options?: ListPostsOptions,
+): Promise<BlogPostListItem[] | { items: BlogPostListItem[]; total: number }> {
   await ensurePostSchema();
-  const result = await query<Record<string, unknown>>(`
-    SELECT Id, Title, Slug, Status, UpdatedAt
-    FROM dbo.BlogPost
-    ORDER BY UpdatedAt DESC
-  `);
-  return result.recordset.map((row) => ({
+
+  const paginate = options !== undefined;
+  const page = options?.page && Number.isInteger(options.page) && options.page > 0 ? options.page : 1;
+  const pageSize =
+    options?.pageSize && Number.isInteger(options.pageSize) && options.pageSize > 0
+      ? Math.min(options.pageSize, 100)
+      : 20;
+  const status =
+    options?.status === "draft" || options?.status === "published" || options?.status === "archived"
+      ? options.status
+      : undefined;
+  const viewer = await getCurrentUser();
+  const authorId = viewer?.role === "guest" ? viewer.id : options?.authorId || undefined;
+  const pending = options?.pending;
+
+  const filters: string[] = [];
+  if (status) {
+    filters.push("p.Status = @status");
+  }
+  if (authorId) {
+    filters.push("p.AuthorId = @authorId");
+  }
+  if (pending === true) {
+    filters.push(PENDING_REVISION);
+  } else if (pending === false) {
+    filters.push(`NOT ${PENDING_REVISION}`);
+  }
+  const whereSql = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+
+  const bindFilters = (request: { input: (name: string, type: unknown, value: unknown) => void }) => {
+    if (status) {
+      request.input("status", sql.VarChar(20), status);
+    }
+    if (authorId) {
+      request.input("authorId", sql.UniqueIdentifier, authorId);
+    }
+  };
+
+  const count = paginate
+    ? await query<Record<string, unknown>>(
+        `SELECT COUNT(*) AS total
+         FROM dbo.BlogPost AS p
+         ${whereSql}`,
+        (request) => {
+          bindFilters(request);
+        },
+      )
+    : undefined;
+
+  const result = await query<Record<string, unknown>>(
+    `SELECT
+       p.Id AS id,
+       p.Title AS title,
+       p.Slug AS slug,
+       p.Status AS status,
+       p.UpdatedAt AS updatedAt,
+       p.PublishedAt AS publishedAt,
+       COALESCE(NULLIF(LTRIM(RTRIM(u.DisplayName)), N''), u.Email, N'') AS authorName,
+       CASE WHEN ${PENDING_REVISION} THEN 1 ELSE 0 END AS hasPendingRevision
+     FROM dbo.BlogPost AS p
+     INNER JOIN dbo.AdminUser AS u ON u.Id = p.AuthorId
+     ${whereSql}
+     ORDER BY p.UpdatedAt DESC, p.Id ASC
+     ${paginate ? "OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY" : ""}`,
+    (request) => {
+      bindFilters(request);
+      if (paginate) {
+        request.input("offset", sql.Int, (page - 1) * pageSize);
+        request.input("pageSize", sql.Int, pageSize);
+      }
+    },
+  );
+
+  const items = result.recordset.map((row) => ({
     id: String(field(row, "id") ?? ""),
     title: String(field(row, "title") ?? ""),
     slug: String(field(row, "slug") ?? ""),
-    status: field(row, "status") === "published" ? "published" : "draft",
-    updatedAt: new Date(String(field(row, "updatedAt") ?? "")).toISOString(),
+    status: listStatus(field(row, "status")),
+    hasPendingRevision: flag(field(row, "hasPendingRevision")),
+    authorName: String(field(row, "authorName") ?? ""),
+    updatedAt: timestamp(field(row, "updatedAt")),
+    publishedAt: timestampOrNull(field(row, "publishedAt")),
   }));
+
+  if (!paginate) {
+    return items;
+  }
+
+  const total = Number(field(count?.recordset[0] ?? {}, "total") ?? 0);
+  return {
+    items,
+    total: Number.isFinite(total) ? total : 0,
+  };
 }
 
 export async function createPost(
