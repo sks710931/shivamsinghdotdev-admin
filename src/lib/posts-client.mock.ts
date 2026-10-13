@@ -281,7 +281,12 @@ export const mockPostsApi: PostsApi = {
   },
 
   async createPost(input: CreatePostInput): Promise<CreatePostResult> {
-    const fields = contentFields(input);
+    const fields = contentFields({
+      title: input.title,
+      slug: input.slug,
+      summary: input.summary,
+      bodyHtml: input.bodyHtml,
+    });
     if (!input.title.trim()) {
       fields.title = "Title is required.";
     }
