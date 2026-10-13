@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored TinyMCE assets copied by scripts/copy-tinymce.mjs.
+    "public/tinymce/**",
   ]),
 ]);
 
