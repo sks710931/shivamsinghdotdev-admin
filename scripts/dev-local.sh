@@ -14,7 +14,7 @@ for v in DATABASE_URL DB_SERVER DB_DATABASE DB_USER DB_PASSWORD; do
 done
 IMAGE=mcr.microsoft.com/mssql/server:2022-latest
 SECRET_FILE="${HOME}/.blogdesk/sa_password"
-DOCKER="docker"; docker info >/dev/null 2>&1 || DOCKER="sudo docker"
+DOCKER="docker"; docker info >/dev/null 2>&1 || DOCKER="sudo --preserve-env=SQLCMDPASSWORD,MSSQL_SA_PASSWORD docker"
 
 if ! $DOCKER info >/dev/null 2>&1; then
   echo "Starting Docker daemon..."
@@ -31,23 +31,26 @@ SA_PASSWORD="$(cat "$SECRET_FILE")"
 
 if ! $DOCKER ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
   echo "Creating $CONTAINER..."
-  $DOCKER run -d --name "$CONTAINER" --restart unless-stopped \
-    -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$SA_PASSWORD" -e MSSQL_MEMORY_LIMIT_MB=2048 \
+  MSSQL_SA_PASSWORD="$SA_PASSWORD" $DOCKER run -d --name "$CONTAINER" --restart unless-stopped \
+    -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD -e MSSQL_MEMORY_LIMIT_MB=2048 \
     -p 127.0.0.1:1433:1433 -v blogdesk-mssql-data:/var/opt/mssql "$IMAGE" >/dev/null
 elif [ "$($DOCKER inspect -f '{{.State.Running}}' "$CONTAINER")" != "true" ]; then
   $DOCKER start "$CONTAINER" >/dev/null
 fi
 
-SQLCMD=(/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$SA_PASSWORD" -b)
+# Password goes through the environment, never argv, so it does not show in `ps`.
+export SQLCMDPASSWORD="$SA_PASSWORD"
+SQLCMD=(/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -b)
 echo -n "Waiting for SQL Server"
 for _ in $(seq 1 60); do
-  $DOCKER exec "$CONTAINER" "${SQLCMD[@]}" -Q "SELECT 1" >/dev/null 2>&1 && { echo " ready"; break; }
+  $DOCKER exec -e SQLCMDPASSWORD "$CONTAINER" "${SQLCMD[@]}" -Q "SELECT 1" >/dev/null 2>&1 && { echo " ready"; break; }
   echo -n "."; sleep 2
 done
-$DOCKER exec "$CONTAINER" "${SQLCMD[@]}" -Q "SELECT 1" >/dev/null 2>&1 || { echo " SQL Server not healthy"; exit 1; }
+$DOCKER exec -e SQLCMDPASSWORD "$CONTAINER" "${SQLCMD[@]}" -Q "SELECT 1" >/dev/null 2>&1 || { echo " SQL Server not healthy"; exit 1; }
 
 DB_NAME="${LOCAL_DB_NAME:-blogdesk_$(whoami)_$(basename "$PWD" | tr -c 'A-Za-z0-9\n' '_')}"
-$DOCKER exec "$CONTAINER" "${SQLCMD[@]}" -Q "IF DB_ID(N'$DB_NAME') IS NULL CREATE DATABASE [$DB_NAME]" >/dev/null
+[[ "$DB_NAME" =~ ^[A-Za-z][A-Za-z0-9_]{0,99}$ ]] || { echo "Invalid database name: $DB_NAME"; exit 1; }
+$DOCKER exec -e SQLCMDPASSWORD "$CONTAINER" "${SQLCMD[@]}" -Q "IF DB_ID(N'$DB_NAME') IS NULL CREATE DATABASE [$DB_NAME]" >/dev/null
 
 # Write .env.local (gitignored). Keep any non-DB values the developer already set.
 touch .env.local; chmod 600 .env.local
