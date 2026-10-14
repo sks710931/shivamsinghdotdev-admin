@@ -1,0 +1,138 @@
+import "server-only";
+
+import { AuthError } from "@/server/auth-error";
+import { query, sql } from "@/server/db";
+import { getPostById, type BlogPostDetail, type PostActor } from "@/server/posts";
+import { sanitizeHtml } from "@/server/sanitize";
+
+const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+type FieldSpec = { label: string; max: number; required: boolean; column: string; type: () => sql.ISqlTypeFactoryWithLength | sql.ISqlType };
+
+const FIELDS: Record<string, FieldSpec> = {
+  title: { label: "Title", max: 200, required: true, column: "Title", type: () => sql.NVarChar(200) },
+  slug: { label: "URL slug", max: 180, required: true, column: "Slug", type: () => sql.VarChar(180) },
+  summary: { label: "Summary", max: 500, required: false, column: "Summary", type: () => sql.NVarChar(500) },
+  tags: { label: "Tags", max: 500, required: false, column: "Tags", type: () => sql.NVarChar(500) },
+  seoTitle: { label: "SEO title", max: 200, required: false, column: "SeoTitle", type: () => sql.NVarChar(200) },
+  seoKeywords: { label: "SEO keywords", max: 500, required: false, column: "SeoKeywords", type: () => sql.NVarChar(500) },
+  bodyHtml: { label: "Body", max: 200_000, required: true, column: "BodyHtml", type: () => sql.NVarChar(sql.MAX) },
+};
+
+type EditableField = keyof typeof FIELDS;
+
+export type PostPatch = {
+  version: Buffer;
+  force: boolean;
+  changes: Partial<Record<EditableField, string>>;
+};
+
+function invalid(fields: Record<string, string>): never {
+  const error = new AuthError("Some fields are invalid.", 400, "validation") as AuthError & {
+    fields?: Record<string, string>;
+  };
+  error.fields = fields;
+  throw error;
+}
+
+/** Validates a PATCH body against the contract v1.1 allow-list. bodyHtml is sanitised here. */
+export function parsePostPatch(input: unknown): PostPatch {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    invalid({ body: "Expected a JSON object." });
+  }
+  const body = input as Record<string, unknown>;
+  const fields: Record<string, string> = {};
+  const changes: Partial<Record<EditableField, string>> = {};
+
+  for (const key of Object.keys(body)) {
+    if (key !== "version" && key !== "force" && !(key in FIELDS)) {
+      fields[key] = "This field cannot be changed.";
+    }
+  }
+
+  let version = Buffer.alloc(0);
+  if (typeof body.version !== "string" || body.version.length === 0) {
+    fields.version = "Version is required.";
+  } else {
+    version = Buffer.from(body.version, "base64");
+    if (version.length !== 8) fields.version = "Version is not valid.";
+  }
+
+  if (body.force !== undefined && typeof body.force !== "boolean") {
+    fields.force = "Force must be true or false.";
+  }
+
+  for (const [key, spec] of Object.entries(FIELDS)) {
+    if (!(key in body)) continue;
+    const raw = body[key];
+    if (typeof raw !== "string") {
+      fields[key] = `${spec.label} must be text.`;
+      continue;
+    }
+    let value = key === "bodyHtml" ? sanitizeHtml(raw) : raw.trim();
+    if (key === "slug") value = value.toLowerCase();
+    if (spec.required && value.trim().length === 0) fields[key] = `${spec.label} is required.`;
+    else if (value.length > spec.max) fields[key] = `${spec.label} is too long.`;
+    else if (key === "slug" && !SLUG.test(value)) fields[key] = "URL slug can use lowercase letters, numbers, and hyphens.";
+    else changes[key as EditableField] = value;
+  }
+
+  if (Object.keys(fields).length > 0) invalid(fields);
+  return { version, force: body.force === true, changes };
+}
+
+function isDuplicateKey(error: unknown): boolean {
+  const number = error && typeof error === "object" && "number" in error ? error.number : undefined;
+  return number === 2601 || number === 2627;
+}
+
+/**
+ * PATCH /api/posts/[id]. Draft posts are updated in place with a RowVersion check.
+ * Published posts are handled by the pending-revision path (next commit).
+ */
+export async function updatePost(actor: PostActor, id: string, input: unknown): Promise<BlogPostDetail> {
+  const patch = parsePostPatch(input);
+  if (patch.force && actor.role !== "admin") {
+    throw new AuthError("Only an admin can force an update.", 403, "forbidden");
+  }
+
+  const current = await getPostById(actor, id);
+  if (!current) throw new AuthError("Post not found.", 404, "not_found");
+  if (current.status === "archived") throw new AuthError("This post is archived.", 409, "archived");
+  if (current.status === "published") {
+    throw new AuthError("Editing a published post is not available yet.", 501, "not_implemented");
+  }
+  if (current.version !== patch.version.toString("base64")) {
+    throw new AuthError("This post changed since you loaded it.", 409, "stale_version");
+  }
+
+  const changed = (Object.keys(patch.changes) as EditableField[]).filter(
+    (key) => patch.changes[key] !== (current as unknown as Record<string, unknown>)[key],
+  );
+  if (changed.length === 0) return current;
+
+  const sets = changed.map((key) => `${FIELDS[key].column} = @${key}`).join(", ");
+  let rows: number;
+  try {
+    const result = await query(
+      `UPDATE dbo.BlogPost
+       SET ${sets}, UpdatedAt = SYSUTCDATETIME()
+       WHERE Id = @id AND RowVersion = @version${actor.role === "guest" ? " AND AuthorId = @actorId" : ""}`,
+      (request) => {
+        request.input("id", sql.UniqueIdentifier, id);
+        request.input("version", sql.VarBinary(8), patch.version);
+        if (actor.role === "guest") request.input("actorId", sql.UniqueIdentifier, actor.id);
+        for (const key of changed) request.input(key, FIELDS[key].type() as sql.ISqlType, patch.changes[key]);
+      },
+    );
+    rows = result.rowsAffected[0] ?? 0;
+  } catch (error) {
+    if (isDuplicateKey(error)) throw new AuthError("That URL slug is already used.", 409, "slug_taken");
+    throw error;
+  }
+  if (rows === 0) throw new AuthError("This post changed since you loaded it.", 409, "stale_version");
+
+  const updated = await getPostById(actor, id);
+  if (!updated) throw new AuthError("Post not found.", 404, "not_found");
+  return updated;
+}
