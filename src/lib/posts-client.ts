@@ -123,11 +123,16 @@ export type PatchPostResult = {
 
 /**
  * POST /api/posts/{id}/publish publishes a draft. `version` is the live token.
+ * Draft publish does not accept `force`.
  * POST /api/posts/{id}/revision/publish publishes the pending revision.
- * `version` there is the revision token. Both accept optional `force` and
- * return PublishPostResult.
+ * `version` there is the revision token, and `force` is optional.
+ * Both return PublishPostResult.
  */
-export type PublishPostInput = {
+export type PublishDraftInput = {
+  version: string;
+};
+
+export type PublishRevisionInput = {
   version: string;
   force?: boolean;
 };
@@ -568,8 +573,8 @@ export interface PostsApi {
   patchPost(id: string, input: PatchPostInput): Promise<PatchPostResult>;
   getRevision(id: string): Promise<RevisionDetail>;
   deleteRevision(id: string, input: RevisionMutationInput): Promise<void>;
-  publishPost(id: string, input: PublishPostInput): Promise<PublishPostResult>;
-  publishRevision(id: string, input: PublishPostInput): Promise<PublishPostResult>;
+  publishPost(id: string, input: PublishDraftInput): Promise<PublishPostResult>;
+  publishRevision(id: string, input: PublishRevisionInput): Promise<PublishPostResult>;
   unpublishPost(id: string, input: RevisionMutationInput): Promise<UnpublishPostResult>;
   archivePost(id: string, input: RevisionMutationInput): Promise<void>;
 }
@@ -598,11 +603,11 @@ export const httpPostsApi: PostsApi = {
   async deleteRevision(id, input) {
     await request(`/api/posts/${encodeURIComponent(id)}/revision`, jsonInit("DELETE", input));
   },
-  async publishPost(id, input) {
+  async publishPost(id: string, input: PublishDraftInput) {
     const { body } = await request(`/api/posts/${encodeURIComponent(id)}/publish`, jsonInit("POST", input));
     return parsePublish(body);
   },
-  async publishRevision(id, input) {
+  async publishRevision(id: string, input: PublishRevisionInput) {
     const { body } = await request(
       `/api/posts/${encodeURIComponent(id)}/revision/publish`,
       jsonInit("POST", input),

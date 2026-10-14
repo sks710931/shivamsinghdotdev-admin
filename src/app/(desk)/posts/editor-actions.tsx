@@ -20,6 +20,7 @@ export function EditorActions({
   canArchive,
   canUpdate,
   onSave,
+  saveDisabled = false,
   onPublish,
   onUpdate,
   onUnpublish,
@@ -33,6 +34,7 @@ export function EditorActions({
   canArchive: boolean;
   canUpdate: boolean;
   onSave: () => void;
+  saveDisabled?: boolean;
   onPublish: () => void;
   onUpdate: () => void;
   onUnpublish: () => void;
@@ -59,7 +61,7 @@ export function EditorActions({
         </p>
       ) : null}
       {actions.save || actions.saveDraft ? (
-        <button type="button" disabled={pending} onClick={onSave} className={primary}>
+        <button type="button" disabled={pending || saveDisabled} onClick={onSave} className={primary}>
           <Save aria-hidden className="h-4 w-4" strokeWidth={1.75} />
           {pending ? "Saving" : saveLabel}
         </button>

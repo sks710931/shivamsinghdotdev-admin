@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { mockPostsApi, resetMockPosts } from "@/lib/posts-client.mock";
 import {
@@ -57,6 +57,15 @@ describe("apiErrorFromResponse", () => {
     );
     expect(apiErrorFromResponse({ status: 409 }, { error: "Base moved.", code: "revision_stale" }).code).toBe("revision_stale");
     expect(apiErrorFromResponse({ status: 409 }, { error: "Archived.", code: "archived" }).code).toBe("archived");
+  });
+
+  it("maps 409 codes not_draft and not_published", () => {
+    expect(apiErrorFromResponse({ status: 409 }, { error: "Only a draft can be published.", code: "not_draft" }).code).toBe(
+      "not_draft",
+    );
+    expect(apiErrorFromResponse({ status: 409 }, { error: "Only a published post can be archived.", code: "not_published" }).code).toBe(
+      "not_published",
+    );
   });
 
   it("treats the current slug conflict, which has no code, as slug_taken", () => {
@@ -134,6 +143,67 @@ describe("getPostsApi", () => {
     } else {
       process.env.NEXT_PUBLIC_POSTS_API_MOCK = previous;
     }
+  });
+});
+
+describe("httpPostsApi", () => {
+  const fetchMock = vi.fn(() =>
+    Promise.resolve(
+      new Response(JSON.stringify({ version: "2", publishedAt: "2026-10-14T12:00:00.000Z" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    ),
+  );
+
+  beforeEach(() => {
+    fetchMock.mockClear();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("publishRevision posts /api/posts/{id}/revision/publish with version and force", async () => {
+    await httpPostsApi.publishRevision(publishedId, { version: "4", force: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/posts/${publishedId}/revision/publish`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ version: "4", force: true }),
+      }),
+    );
+  });
+
+  it("archivePost posts /api/posts/{id}/archive", async () => {
+    await httpPostsApi.archivePost(publishedId, { version: "4" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/posts/${publishedId}/archive`,
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+  });
+
+  it("publishPost posts /api/posts/{id}/publish with version", async () => {
+    await httpPostsApi.publishPost(draftId, { version: "4" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/posts/${draftId}/publish`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ version: "4" }),
+      }),
+    );
+  });
+
+  it("publishPost's input type rejects force", () => {
+    // @ts-expect-error PublishDraftInput has no force; only publishRevision accepts it
+    const rejected: Parameters<typeof httpPostsApi.publishPost>[1] = { version: "4", force: true };
+    expect(rejected.version).toBe("4");
   });
 });
 

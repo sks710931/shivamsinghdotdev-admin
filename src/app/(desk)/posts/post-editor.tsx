@@ -228,6 +228,7 @@ export function PostEditor({
   const [initialBody] = useState(starting.body);
   const [slugTouched, setSlugTouched] = useState(mode === "edit");
   const [pending, setPending] = useState(false);
+  const [saveBlocked, setSaveBlocked] = useState(false);
   const [banner, setBanner] = useState<string | null>(initialNotice);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [conflict, setConflict] = useState<ApiError | null>(null);
@@ -332,6 +333,9 @@ export function PostEditor({
   }
 
   async function persist(options?: { navigate?: boolean }): Promise<{ post: PostDetail; revision: RevisionDetail | null }> {
+    if (saveBlocked) {
+      throw new LocalInvalid();
+    }
     const problems = localProblems(fields);
     if (Object.keys(problems).length > 0) {
       setFieldErrors(problems);
@@ -352,48 +356,29 @@ export function PostEditor({
         seoTitle: fields.seoTitle.trim(),
         bodyHtml,
       });
-      let detail: PostDetail | null = null;
+      let detail: PostDetail;
       try {
         detail = await api.getPost(created.id);
       } catch (error: unknown) {
         if (!(error instanceof ApiError) || error.code !== "not_found") {
           throw error;
         }
+        setSaveBlocked(true);
+        setSavedFields(fields);
+        setBanner("Saved, but couldn't load the post. Reload to keep editing.");
+        throw new LocalInvalid();
       }
-      const now = new Date().toISOString();
-      const adopted: PostDetail =
-        detail ?? {
-          id: created.id,
-          title: fields.title.trim(),
-          slug: created.slug,
-          summary: fields.summary.trim(),
-          tags: [...fields.tags],
-          seoTitle: fields.seoTitle.trim(),
-          seoKeywords: keywords(fields.seoKeywords),
-          bodyHtml,
-          status: "draft",
-          authorId: "",
-          authorName: "",
-          createdAt: now,
-          updatedAt: now,
-          publishedAt: null,
-          version: "1",
-          pendingRevision: null,
-        };
-      const nextFields = { ...fields, body: bodyHtml, slug: adopted.slug };
-      setPost(adopted);
+      const nextFields = { ...fields, body: bodyHtml, slug: detail.slug };
+      setPost(detail);
       setFields(nextFields);
       setSavedFields(nextFields);
-      setSavedLabel(formatSavedIst(adopted.updatedAt || now));
+      setSavedLabel(formatSavedIst(detail.updatedAt));
       setSlugTouched(true);
-      if (!detail && options?.navigate !== false) {
-        setBanner("Saved. This page is staying open because the post read API is not available yet.");
-      }
-      if (detail && options?.navigate !== false) {
-        sessionStorage.setItem(`desk-post-saved:${detail.id}`, adopted.updatedAt || now);
+      if (options?.navigate !== false) {
+        sessionStorage.setItem(`desk-post-saved:${detail.id}`, detail.updatedAt);
         router.replace(`/posts/${detail.id}`);
       }
-      return { post: adopted, revision: null };
+      return { post: detail, revision: null };
     }
 
     const token = post.status === "published" && revision ? revision.version : post.version;
@@ -466,7 +451,7 @@ export function PostEditor({
   }
 
   async function run(action: () => Promise<void>, fallback: string) {
-    if (pending) {
+    if (pending || saveBlocked) {
       return;
     }
     setPending(true);
@@ -488,6 +473,9 @@ export function PostEditor({
   }
 
   function save() {
+    if (saveBlocked) {
+      return;
+    }
     void run(async () => {
       await persist();
       setFieldErrors({});
@@ -678,6 +666,9 @@ export function PostEditor({
       className="flex w-full flex-col gap-6 pb-28 xl:pb-0"
       onSubmit={(event) => {
         event.preventDefault();
+        if (saveBlocked) {
+          return;
+        }
         if (actions.save || actions.saveDraft) {
           save();
         }
@@ -927,6 +918,7 @@ export function PostEditor({
                 canArchive={Boolean(post) && actions.archive}
                 canUpdate={actions.updateLive}
                 onSave={save}
+                saveDisabled={saveBlocked}
                 onPublish={() => setConfirm("publish")}
                 onUpdate={askUpdate}
                 onUnpublish={() => setConfirm("unpublish")}
@@ -1050,6 +1042,7 @@ export function PostEditor({
           canArchive={Boolean(post) && actions.archive}
           canUpdate={actions.updateLive}
           onSave={save}
+          saveDisabled={saveBlocked}
           onPublish={() => setConfirm("publish")}
           onUpdate={askUpdate}
           onUnpublish={() => setConfirm("unpublish")}

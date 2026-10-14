@@ -22,8 +22,9 @@ import {
   type PostListResult,
   type PostStatus,
   type PostsApi,
-  type PublishPostInput,
+  type PublishDraftInput,
   type PublishPostResult,
+  type PublishRevisionInput,
   type RevisionDetail,
   type RevisionMutationInput,
   type UnpublishPostResult,
@@ -414,7 +415,7 @@ export const mockPostsApi: PostsApi = {
     post.pendingRevision = null;
   },
 
-  async publishPost(id: string, input: PublishPostInput): Promise<PublishPostResult> {
+  async publishPost(id: string, input: PublishDraftInput): Promise<PublishPostResult> {
     const post = requirePost(id);
     if (post.status === "archived") {
       throw new ApiError({
@@ -441,7 +442,7 @@ export const mockPostsApi: PostsApi = {
     return { version: post.version, publishedAt: now };
   },
 
-  async publishRevision(id: string, input: PublishPostInput): Promise<PublishPostResult> {
+  async publishRevision(id: string, input: PublishRevisionInput): Promise<PublishPostResult> {
     const post = requirePost(id);
     if (post.status !== "published") {
       throw new ApiError({
