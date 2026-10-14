@@ -243,7 +243,14 @@ export function PostEditor({
   const [blocksOpen, setBlocksOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [toolbar, setToolbar] = useState<ToolbarSnapshot>(defaultToolbar);
-  const recovery = useDraftRecovery(userId, post?.id ?? "new", fields.title, fields.body);
+  const [newDraftId] = useState(() => crypto.randomUUID());
+  const recovery = useDraftRecovery(
+    userId,
+    post?.id ?? "new:" + newDraftId,
+    fields.title,
+    fields.body,
+    post?.version ?? null,
+  );
   const editorRef = useRef<TinyMCEEditor | null>(null);
   const previewRef = useRef<HTMLDialogElement>(null);
   const dirty = canonical(fields) !== canonical(savedFields);
@@ -703,6 +710,7 @@ export function PostEditor({
       {recovery.pending ? (
         <DraftRecoveryBanner
           savedAt={recovery.pending.savedAt}
+          stale={recovery.pending.stale}
           onRestore={() => {
             const s = recovery.restore();
             if (s) {

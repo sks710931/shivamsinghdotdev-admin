@@ -4,6 +4,8 @@ export interface DraftSnapshot {
   title: string;
   body: string;
   savedAt: string;
+  /** Server version this draft was taken against. Null for a post that is not saved yet. */
+  baseVersion: string | null;
 }
 
 export const SNAPSHOT_KEY_PREFIX = "pixel:draft:";
@@ -22,6 +24,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
 function isDraftSnapshot(value: unknown): value is DraftSnapshot {
   if (!isRecord(value)) {
     return false;
@@ -31,7 +37,8 @@ function isDraftSnapshot(value: unknown): value is DraftSnapshot {
     typeof value.postId === "string" &&
     typeof value.title === "string" &&
     typeof value.body === "string" &&
-    typeof value.savedAt === "string"
+    typeof value.savedAt === "string" &&
+    isNullableString(value.baseVersion)
   );
 }
 
@@ -42,6 +49,7 @@ function toDraftSnapshot(value: DraftSnapshot): DraftSnapshot {
     title: value.title,
     body: value.body,
     savedAt: value.savedAt,
+    baseVersion: value.baseVersion,
   };
 }
 
@@ -131,6 +139,18 @@ export function loadSnapshot(userId: string, postId: string): DraftSnapshot | nu
 export function clearSnapshot(userId: string, postId: string): void {
   try {
     localStorage.removeItem(snapshotKey(userId, postId));
+  } catch {
+    // Storage may be unavailable (private mode, disabled, or a security error).
+  }
+}
+
+/** Remove every draft snapshot so a signed-out browser cannot restore them. */
+export function clearAllSnapshots(): void {
+  try {
+    const keys = listSnapshotKeys();
+    for (const key of keys) {
+      localStorage.removeItem(key);
+    }
   } catch {
     // Storage may be unavailable (private mode, disabled, or a security error).
   }

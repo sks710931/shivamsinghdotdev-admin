@@ -7,7 +7,7 @@ import {
   saveSnapshot,
   type DraftSnapshot,
 } from "./draft-snapshot";
-import { useDraftRecovery } from "./use-draft-recovery";
+import { useDraftRecovery, type PendingDraft } from "./use-draft-recovery";
 
 vi.mock("./draft-snapshot", () => ({
   loadSnapshot: vi.fn(() => null),
@@ -31,8 +31,13 @@ function snapshot(overrides: Partial<DraftSnapshot> = {}): DraftSnapshot {
     title: "Draft title",
     body: "Draft body",
     savedAt: "2026-10-13T08:00:00.000Z",
+    baseVersion: null,
     ...overrides,
   };
+}
+
+function offered(draft: DraftSnapshot, stale: boolean): PendingDraft {
+  return { ...draft, stale };
 }
 
 describe("useDraftRecovery", () => {
@@ -53,7 +58,7 @@ describe("useDraftRecovery", () => {
 
   it("leaves pending null when nothing is stored", () => {
     const { result } = renderHook(() =>
-      useDraftRecovery(USER_ID, "post-1", "Title", "Body"),
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body", null),
     );
 
     expect(mockedLoad).toHaveBeenCalledTimes(1);
@@ -69,7 +74,7 @@ describe("useDraftRecovery", () => {
     );
 
     const { result } = renderHook(() =>
-      useDraftRecovery(USER_ID, "post-1", "Title", "Body"),
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body", null),
     );
 
     expect(result.current.pending).toBeNull();
@@ -80,18 +85,18 @@ describe("useDraftRecovery", () => {
     mockedLoad.mockReturnValue(titleDiffers);
 
     const titleHook = renderHook(() =>
-      useDraftRecovery(USER_ID, "post-1", "Title", "Body"),
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body", null),
     );
-    expect(titleHook.result.current.pending).toEqual(titleDiffers);
+    expect(titleHook.result.current.pending).toEqual(offered(titleDiffers, false));
     titleHook.unmount();
 
     const bodyDiffers = snapshot({ title: "Title", body: "Older body" });
     mockedLoad.mockReturnValue(bodyDiffers);
 
     const bodyHook = renderHook(() =>
-      useDraftRecovery(USER_ID, "post-1", "Title", "Body"),
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body", null),
     );
-    expect(bodyHook.result.current.pending).toEqual(bodyDiffers);
+    expect(bodyHook.result.current.pending).toEqual(offered(bodyDiffers, false));
   });
 
   it("does not reload or clear pending when the editor text changes", () => {
@@ -100,14 +105,14 @@ describe("useDraftRecovery", () => {
 
     const { result, rerender } = renderHook(
       ({ title, body }: { title: string; body: string }) =>
-        useDraftRecovery(USER_ID, "post-1", title, body),
+        useDraftRecovery(USER_ID, "post-1", title, body, null),
       { initialProps: { title: "Title", body: "Body" } },
     );
 
     rerender({ title: "Title edited", body: "Body edited" });
 
     expect(mockedLoad).toHaveBeenCalledTimes(1);
-    expect(result.current.pending).toEqual(stored);
+    expect(result.current.pending).toEqual(offered(stored, false));
   });
 
   it("loads again when the post id changes", () => {
@@ -121,22 +126,22 @@ describe("useDraftRecovery", () => {
 
     const { result, rerender } = renderHook(
       ({ postId }: { postId: string }) =>
-        useDraftRecovery(USER_ID, postId, "Title", "Body"),
+        useDraftRecovery(USER_ID, postId, "Title", "Body", null),
       { initialProps: { postId: "post-1" } },
     );
 
-    expect(result.current.pending).toEqual(first);
+    expect(result.current.pending).toEqual(offered(first, false));
 
     rerender({ postId: "post-2" });
 
     expect(mockedLoad).toHaveBeenNthCalledWith(2, USER_ID, "post-2");
-    expect(result.current.pending).toEqual(second);
+    expect(result.current.pending).toEqual(offered(second, false));
   });
 
   it("debounces saveSnapshot by 1000ms and keeps the latest title and body", () => {
     const { rerender } = renderHook(
       ({ title, body }: { title: string; body: string }) =>
-        useDraftRecovery(USER_ID, "post-1", title, body),
+        useDraftRecovery(USER_ID, "post-1", title, body, null),
       { initialProps: { title: "Title", body: "Body" } },
     );
 
@@ -164,6 +169,7 @@ describe("useDraftRecovery", () => {
       postId: "post-1",
       title: "Title 3",
       body: "Body 3",
+      baseVersion: null,
       savedAt: "2026-10-14T12:00:02.400Z",
     });
   });
@@ -171,7 +177,7 @@ describe("useDraftRecovery", () => {
   it("does not save after unmount", () => {
     const { rerender, unmount } = renderHook(
       ({ title, body }: { title: string; body: string }) =>
-        useDraftRecovery(USER_ID, "post-1", title, body),
+        useDraftRecovery(USER_ID, "post-1", title, body, null),
       { initialProps: { title: "Title", body: "Body" } },
     );
 
@@ -193,10 +199,10 @@ describe("useDraftRecovery", () => {
     mockedLoad.mockReturnValue(stored);
 
     const { result } = renderHook(() =>
-      useDraftRecovery(USER_ID, "post-1", "Title", "Body"),
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body", null),
     );
 
-    expect(result.current.pending).toEqual(stored);
+    expect(result.current.pending).toEqual(offered(stored, false));
 
     act(() => {
       vi.advanceTimersByTime(2000);
@@ -204,7 +210,7 @@ describe("useDraftRecovery", () => {
 
     expect(mockedSave).not.toHaveBeenCalled();
     expect(mockedClear).not.toHaveBeenCalled();
-    expect(result.current.pending).toEqual(stored);
+    expect(result.current.pending).toEqual(offered(stored, false));
   });
 
   it("saves edits made after the recovered draft is discarded", () => {
@@ -212,7 +218,7 @@ describe("useDraftRecovery", () => {
 
     const { result, rerender } = renderHook(
       ({ title, body }: { title: string; body: string }) =>
-        useDraftRecovery(USER_ID, "post-1", title, body),
+        useDraftRecovery(USER_ID, "post-1", title, body, null),
       { initialProps: { title: "Title", body: "Body" } },
     );
 
@@ -243,6 +249,7 @@ describe("useDraftRecovery", () => {
       postId: "post-1",
       title: "Title edited",
       body: "Body edited",
+      baseVersion: null,
       savedAt: "2026-10-14T12:00:02.000Z",
     });
   });
@@ -252,7 +259,7 @@ describe("useDraftRecovery", () => {
     mockedLoad.mockReturnValue(stored);
 
     const { result } = renderHook(() =>
-      useDraftRecovery(USER_ID, "post-1", "Title", "Body"),
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body", null),
     );
 
     let restored: DraftSnapshot | null = null;
@@ -260,7 +267,7 @@ describe("useDraftRecovery", () => {
       restored = result.current.restore();
     });
 
-    expect(restored).toBe(stored);
+    expect(restored).toEqual(offered(stored, false));
     expect(result.current.pending).toBeNull();
     expect(mockedClear).not.toHaveBeenCalled();
 
@@ -275,7 +282,7 @@ describe("useDraftRecovery", () => {
     mockedLoad.mockReturnValue(snapshot());
 
     const { result } = renderHook(() =>
-      useDraftRecovery(USER_ID, "post-1", "Title", "Body"),
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body", null),
     );
 
     act(() => {
@@ -292,7 +299,7 @@ describe("useDraftRecovery", () => {
     mockedLoad.mockReturnValue(stored);
 
     const { result } = renderHook(() =>
-      useDraftRecovery(USER_ID, "post-1", "Title", "Body"),
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body", null),
     );
 
     act(() => {
@@ -301,6 +308,132 @@ describe("useDraftRecovery", () => {
 
     expect(mockedClear).toHaveBeenCalledTimes(1);
     expect(mockedClear).toHaveBeenCalledWith(USER_ID, "post-1");
-    expect(result.current.pending).toEqual(stored);
+    expect(result.current.pending).toEqual(offered(stored, false));
+  });
+
+  it("offers a fresh pending snapshot when baseVersion matches and the text differs", () => {
+    const stored = snapshot({ baseVersion: "rev-1", title: "Older title" });
+    mockedLoad.mockReturnValue(stored);
+
+    const { result } = renderHook(() =>
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body", "rev-1"),
+    );
+
+    expect(result.current.pending).toEqual(offered(stored, false));
+    expect(result.current.pending?.stale).toBe(false);
+    expect(mockedClear).not.toHaveBeenCalled();
+  });
+
+  it("keeps a stale snapshot pending when baseVersion differs", () => {
+    const stored = snapshot({ baseVersion: "rev-1", title: "Older title" });
+    mockedLoad.mockReturnValue(stored);
+
+    const mismatch = renderHook(() =>
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body", "rev-2"),
+    );
+
+    expect(mismatch.result.current.pending).toEqual(offered(stored, true));
+    expect(mismatch.result.current.pending?.stale).toBe(true);
+    expect(mockedClear).not.toHaveBeenCalled();
+    expect(mockedPrune).toHaveBeenCalledWith(USER_ID);
+    mismatch.unmount();
+
+    const sameText = snapshot({ baseVersion: "rev-1", title: "Title", body: "Body" });
+    mockedLoad.mockReturnValue(sameText);
+
+    const unchangedText = renderHook(() =>
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body", null),
+    );
+
+    expect(unchangedText.result.current.pending).toEqual(offered(sameText, true));
+    expect(unchangedText.result.current.pending?.stale).toBe(true);
+    expect(mockedClear).not.toHaveBeenCalled();
+  });
+
+  it("marks a pending snapshot stale when the server baseVersion changes", () => {
+    const stored = snapshot({ baseVersion: "rev-1", title: "Older title" });
+    mockedLoad.mockReturnValue(stored);
+
+    const { result, rerender } = renderHook(
+      ({ baseVersion }: { baseVersion: string | null }) =>
+        useDraftRecovery(USER_ID, "post-1", "Title", "Body", baseVersion),
+      { initialProps: { baseVersion: "rev-1" } },
+    );
+
+    expect(result.current.pending).toEqual(offered(stored, false));
+    expect(mockedClear).not.toHaveBeenCalled();
+
+    rerender({ baseVersion: "rev-2" });
+
+    expect(result.current.pending).toEqual(offered(stored, true));
+    expect(result.current.pending?.stale).toBe(true);
+    expect(mockedClear).not.toHaveBeenCalled();
+  });
+
+  it("saves the server baseVersion with the draft", () => {
+    const { rerender } = renderHook(
+      ({ title, body }: { title: string; body: string }) =>
+        useDraftRecovery(USER_ID, "post-1", title, body, "rev-1"),
+      { initialProps: { title: "Title", body: "Body" } },
+    );
+
+    rerender({ title: "Title edited", body: "Body edited" });
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(mockedSave).toHaveBeenCalledTimes(1);
+    expect(mockedSave).toHaveBeenCalledWith({
+      userId: USER_ID,
+      postId: "post-1",
+      title: "Title edited",
+      body: "Body edited",
+      baseVersion: "rev-1",
+      savedAt: "2026-10-14T12:00:01.000Z",
+    });
+  });
+
+  it("clear cancels a pending save timer", () => {
+    const { result, rerender } = renderHook(
+      ({ title, body }: { title: string; body: string }) =>
+        useDraftRecovery(USER_ID, "post-1", title, body, null),
+      { initialProps: { title: "Title", body: "Body" } },
+    );
+
+    rerender({ title: "Title edited", body: "Body edited" });
+
+    act(() => {
+      vi.advanceTimersByTime(999);
+    });
+    expect(mockedSave).not.toHaveBeenCalled();
+
+    act(() => {
+      result.current.clear();
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(mockedSave).not.toHaveBeenCalled();
+    expect(mockedClear).toHaveBeenCalledTimes(1);
+    expect(mockedClear).toHaveBeenCalledWith(USER_ID, "post-1");
+
+    rerender({ title: "Title again", body: "Body edited" });
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(mockedSave).toHaveBeenCalledTimes(1);
+    expect(mockedSave).toHaveBeenCalledWith({
+      userId: USER_ID,
+      postId: "post-1",
+      title: "Title again",
+      body: "Body edited",
+      baseVersion: null,
+      savedAt: "2026-10-14T12:00:02.999Z",
+    });
   });
 });

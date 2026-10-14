@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  clearAllSnapshots,
   clearSnapshot,
   loadSnapshot,
   pruneSnapshots,
@@ -17,6 +18,7 @@ const sample: DraftSnapshot = {
   title: "Draft title",
   body: "<p>Hello</p>",
   savedAt: new Date().toISOString(),
+  baseVersion: null,
 };
 
 function keyFor(userId: string, postId: string): string {
@@ -24,7 +26,7 @@ function keyFor(userId: string, postId: string): string {
 }
 
 function snapshotAt(userId: string, postId: string, savedAt: string): DraftSnapshot {
-  return { userId, postId, title: "t", body: "b", savedAt };
+  return { userId, postId, title: "t", body: "b", savedAt, baseVersion: null };
 }
 
 afterEach(() => {
@@ -87,6 +89,7 @@ describe("draft snapshot storage", () => {
       title: "",
       body: "",
       savedAt: sample.savedAt,
+      baseVersion: null,
     };
     expect(saveSnapshot(empty)).toBe(true);
     expect(loadSnapshot("user-1", "post-1")).toEqual(empty);
@@ -113,6 +116,8 @@ describe("draft snapshot storage", () => {
       JSON.stringify({ userId: 1, postId: "post-1", title: "t", body: "b", savedAt: "s" }),
       JSON.stringify({ userId: "user-1", postId: "post-1", title: null, body: "b", savedAt: "s" }),
       JSON.stringify({ userId: "user-1", postId: "post-1", title: "t", body: { html: "b" }, savedAt: "s" }),
+      JSON.stringify({ userId: "user-1", postId: "post-1", title: "t", body: "b", savedAt: "s", baseVersion: 1 }),
+      JSON.stringify({ userId: "user-1", postId: "post-1", title: "t", body: "b", savedAt: "s", baseVersion: false }),
     ];
 
     for (const raw of invalid) {
@@ -122,7 +127,14 @@ describe("draft snapshot storage", () => {
   });
 
   it("saves a snapshot at the size cap and refuses one character over it", () => {
-    const shell: DraftSnapshot = { userId: "user-1", postId: "post-1", title: "", body: "", savedAt: "" };
+    const shell: DraftSnapshot = {
+      userId: "user-1",
+      postId: "post-1",
+      title: "",
+      body: "",
+      savedAt: "",
+      baseVersion: null,
+    };
     const overhead = JSON.stringify(shell).length;
     const atLimit: DraftSnapshot = { ...shell, body: "a".repeat(1_000_000 - overhead) };
     expect(JSON.stringify(atLimit)).toHaveLength(1_000_000);
@@ -136,7 +148,14 @@ describe("draft snapshot storage", () => {
   });
 
   it("does not write when the serialized snapshot is over the cap", () => {
-    const shell: DraftSnapshot = { userId: "user-1", postId: "post-1", title: "", body: "", savedAt: "" };
+    const shell: DraftSnapshot = {
+      userId: "user-1",
+      postId: "post-1",
+      title: "",
+      body: "",
+      savedAt: "",
+      baseVersion: null,
+    };
     const overhead = JSON.stringify(shell).length;
     const over: DraftSnapshot = { ...shell, body: "b".repeat(1_000_000 - overhead + 1) };
     expect(saveSnapshot(over)).toBe(false);
@@ -164,12 +183,46 @@ describe("draft snapshot storage", () => {
     expect(() => clearSnapshot("user-1", "post-1")).not.toThrow();
   });
 
+  it("round-trips a string baseVersion", () => {
+    const versioned: DraftSnapshot = { ...sample, baseVersion: "rev-1" };
+    expect(saveSnapshot(versioned)).toBe(true);
+    expect(loadSnapshot("user-1", "post-1")).toEqual(versioned);
+  });
+
   it("fails closed when localStorage is missing", () => {
     vi.stubGlobal("localStorage", undefined);
     expect(saveSnapshot(sample)).toBe(false);
     expect(loadSnapshot("user-1", "post-1")).toBeNull();
     expect(() => clearSnapshot("user-1", "post-1")).not.toThrow();
+    expect(() => clearAllSnapshots()).not.toThrow();
     expect(() => pruneSnapshots("user-1")).not.toThrow();
+  });
+
+  it("removes every draft key and leaves unrelated keys", () => {
+    const other: DraftSnapshot = { ...sample, userId: "user-2", postId: "post-9", baseVersion: "rev-2" };
+    expect(saveSnapshot(sample)).toBe(true);
+    expect(saveSnapshot(other)).toBe(true);
+    localStorage.setItem(SNAPSHOT_KEY_PREFIX + "legacy", "x");
+    localStorage.setItem("pixel:draft", "keep");
+    localStorage.setItem("unrelated", "keep");
+
+    clearAllSnapshots();
+
+    expect(localStorage.getItem(keyFor(sample.userId, sample.postId))).toBeNull();
+    expect(localStorage.getItem(keyFor(other.userId, other.postId))).toBeNull();
+    expect(localStorage.getItem(SNAPSHOT_KEY_PREFIX + "legacy")).toBeNull();
+    expect(localStorage.getItem("pixel:draft")).toBe("keep");
+    expect(localStorage.getItem("unrelated")).toBe("keep");
+    expect(loadSnapshot(sample.userId, sample.postId)).toBeNull();
+    expect(loadSnapshot(other.userId, other.postId)).toBeNull();
+  });
+
+  it("ignores storage errors when clearing every snapshot", () => {
+    localStorage.setItem(keyFor("user-1", "post-1"), "x");
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+    expect(() => clearAllSnapshots()).not.toThrow();
   });
 });
 
