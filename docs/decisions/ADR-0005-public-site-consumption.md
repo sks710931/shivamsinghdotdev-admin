@@ -27,6 +27,7 @@ Render `bodyHtml` with `dangerouslySetInnerHTML` inside an `.article` wrapper. T
 - Sanitized on write in admin (`sanitize-html` allow-list): no `script`, no `on*` attributes, no `style` attribute, no iframes except the allow-list.
 - CSP keeps `script-src` nonce-only, so a surviving inline script does not execute (defence in depth).
 - Images load only from allow-listed hosts via `img-src`.
+- `article.css` is a shared asset owned by Pixel, styling only sanitizer-allowed tags. The source of truth lives in the admin repo. `shivamsinghdotdev` keeps a vendored copy with a header naming the source path and commit. Public site CI fails if the copy's SHA-256 differs from the recorded source hash. Admin preview and public pages both import it.
 
 `POST /api/revalidate` verifies HMAC before calling `revalidateTag`:
 
@@ -58,3 +59,4 @@ Build must succeed when the admin API is down. The list renders an empty state. 
 - An injected `<script>` in `bodyHtml` does not execute.
 - An unpublished post returns 404 within 300 seconds without a webhook.
 - A bad signature on `POST /api/revalidate` returns `401`.
+- Public site CI fails if the vendored `article.css` SHA-256 differs from the recorded source hash.
