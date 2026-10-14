@@ -8,6 +8,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   serverExternalPackages: ["mssql", "tedious"],
   outputFileTracingIncludes: {
     "/api/users/invites": ["./src/server/emails/invite.html"],

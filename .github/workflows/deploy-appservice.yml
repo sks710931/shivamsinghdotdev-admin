@@ -1,0 +1,33 @@
+name: Deploy to Azure App Service
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-appservice
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Assemble standalone package
+        run: rm -rf deploy && cp -a .next/standalone deploy && mkdir -p deploy/.next && cp -a .next/static deploy/.next/static && cp -a public deploy/public && find deploy -name '.env*' -not -path '*/node_modules/*' -delete && (cd deploy && for l in .next/node_modules/*; do if [ -L "$l" ]; then t=$(readlink -f "$l"); rm "$l"; cp -a "$t" "$l"; fi; done)
+      - uses: azure/webapps-deploy@v3
+        with:
+          app-name: shivamsinghdotdev-admin
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: deploy
