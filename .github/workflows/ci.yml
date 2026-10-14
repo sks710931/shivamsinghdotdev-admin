@@ -38,17 +38,16 @@ jobs:
     timeout-minutes: 15
     env:
       # throwaway, CI-only ephemeral container
-      CI_SA_PASSWORD: "Ci_Throwaway_Pa55!"
       DB_SERVER: localhost
       DB_PORT: "1433"
       DB_DATABASE: blogdesk_ci
-      DB_USER: sa
-      DB_PASSWORD: "Ci_Throwaway_Pa55!"
+      DB_USER: blogdesk_app
+      DB_PASSWORD: "Ci_App_Throwaway_1!"
       DB_ENCRYPT: "true"
       DB_TRUST_SERVER_CERTIFICATE: "true"
     services:
       mssql:
-        image: mcr.microsoft.com/mssql/server:2022-latest
+        image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
         env:
           ACCEPT_EULA: Y
           MSSQL_SA_PASSWORD: "Ci_Throwaway_Pa55!"
@@ -63,16 +62,59 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Wait for SQL Server and create DB
+        env:
+          DB_USER: sa
+          DB_PASSWORD: "Ci_Throwaway_Pa55!"
         run: |
           for i in $(seq 1 60); do
-            if docker exec ${{ job.services.mssql.id }} /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$DB_PASSWORD" -Q "SELECT 1"; then
-              docker exec ${{ job.services.mssql.id }} /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$DB_PASSWORD" -Q "IF DB_ID(N'blogdesk_ci') IS NULL CREATE DATABASE blogdesk_ci"
+            if docker exec -e SQLCMDPASSWORD="$DB_PASSWORD" ${{ job.services.mssql.id }} /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -Q "SELECT 1"; then
+              docker exec -e SQLCMDPASSWORD="$DB_PASSWORD" ${{ job.services.mssql.id }} /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -Q "IF DB_ID(N'blogdesk_ci') IS NULL CREATE DATABASE blogdesk_ci" \
+                && docker exec -e SQLCMDPASSWORD="$DB_PASSWORD" ${{ job.services.mssql.id }} /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -Q "CREATE LOGIN blogdesk_app WITH PASSWORD = N'Ci_App_Throwaway_1!', CHECK_POLICY = OFF" \
+                && docker exec -e SQLCMDPASSWORD="$DB_PASSWORD" ${{ job.services.mssql.id }} /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -d blogdesk_ci -Q "CREATE USER blogdesk_app FOR LOGIN blogdesk_app; ALTER ROLE db_datareader ADD MEMBER blogdesk_app; ALTER ROLE db_datawriter ADD MEMBER blogdesk_app; GRANT EXECUTE TO blogdesk_app"
               exit $?
             fi
             sleep 2
           done
           exit 1
       - name: Migrate (first run)
+        env:
+          DB_USER: sa
+          DB_PASSWORD: "Ci_Throwaway_Pa55!"
         run: pnpm db:migrate
       - name: Migrate (second run, must be idempotent)
+        env:
+          DB_USER: sa
+          DB_PASSWORD: "Ci_Throwaway_Pa55!"
         run: pnpm db:migrate
+      - name: Write .env.local for smoke test
+        # throwaway CI-only values
+        run: |
+          printf '%s\n' \
+            "DB_SERVER=${DB_SERVER}" \
+            "DB_PORT=${DB_PORT}" \
+            "DB_DATABASE=${DB_DATABASE}" \
+            "DB_USER=blogdesk_app" \
+            "DB_PASSWORD=Ci_App_Throwaway_1!" \
+            "DB_ENCRYPT=${DB_ENCRYPT}" \
+            "DB_TRUST_SERVER_CERTIFICATE=${DB_TRUST_SERVER_CERTIFICATE}" \
+            "ADMIN_EMAIL=admin@localhost.test" \
+            "ADMIN_PASSWORD=Ci_Admin_Throwaway_1!" \
+            "LOCAL_GUEST_PASSWORD=Ci_Guest_Throwaway_1!" \
+            "APP_URL=http://localhost:3000" \
+            > .env.local
+      - name: Seed users
+        run: pnpm seed:local
+      - name: Build
+        run: pnpm build
+      - name: Start app
+        run: |
+          pnpm start > /tmp/app.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf -o /dev/null http://localhost:3000/login && break
+            sleep 2
+          done
+      - name: API smoke test
+        run: pnpm smoke:local
+      - name: App log on failure
+        if: failure()
+        run: cat /tmp/app.log || true

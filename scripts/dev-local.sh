@@ -12,9 +12,10 @@ CONTAINER=blogdesk-mssql
 for v in DATABASE_URL DB_SERVER DB_DATABASE DB_USER DB_PASSWORD; do
   [ -n "${!v:-}" ] && { echo "Unset $v in your shell first; it would override .env.local."; exit 1; }
 done
-IMAGE=mcr.microsoft.com/mssql/server:2022-latest
+IMAGE=mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
 SECRET_FILE="${HOME}/.blogdesk/sa_password"
-DOCKER="docker"; docker info >/dev/null 2>&1 || DOCKER="sudo --preserve-env=SQLCMDPASSWORD,MSSQL_SA_PASSWORD docker"
+APP_SECRET_FILE="${HOME}/.blogdesk/app_password"
+DOCKER="docker"; docker info >/dev/null 2>&1 || DOCKER="sudo --preserve-env=SQLCMDPASSWORD,MSSQL_SA_PASSWORD,BLOGDESK_APP_PASSWORD docker"
 
 if ! $DOCKER info >/dev/null 2>&1; then
   echo "Starting Docker daemon..."
@@ -28,14 +29,21 @@ if [ ! -s "$SECRET_FILE" ]; then
   umask 077; printf '%sAa1!' "$(openssl rand -hex 16)" > "$SECRET_FILE"
 fi
 SA_PASSWORD="$(cat "$SECRET_FILE")"
+# App login password. Reuse the file when it already has a value; mode 600 like sa_password (umask 077).
+if [ ! -s "$APP_SECRET_FILE" ]; then
+  umask 077; printf '%sAa1!' "$(openssl rand -hex 16)" > "$APP_SECRET_FILE"
+fi
+chmod 600 "$APP_SECRET_FILE"
+APP_PASSWORD="$(cat "$APP_SECRET_FILE")"
 
 if ! $DOCKER ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
   echo "Creating $CONTAINER..."
   MSSQL_SA_PASSWORD="$SA_PASSWORD" $DOCKER run -d --name "$CONTAINER" --restart unless-stopped \
     -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD -e MSSQL_MEMORY_LIMIT_MB=2048 \
     -p 127.0.0.1:1433:1433 -v blogdesk-mssql-data:/var/opt/mssql "$IMAGE" >/dev/null
-elif [ "$($DOCKER inspect -f '{{.State.Running}}' "$CONTAINER")" != "true" ]; then
-  $DOCKER start "$CONTAINER" >/dev/null
+else
+  [ "$($DOCKER inspect -f '{{.Config.Image}}' "$CONTAINER")" = "$IMAGE" ] || echo "Warning: $CONTAINER runs a different image and is not recreated automatically."
+  [ "$($DOCKER inspect -f '{{.State.Running}}' "$CONTAINER")" = "true" ] || $DOCKER start "$CONTAINER" >/dev/null
 fi
 
 # Password goes through the environment, never argv, so it does not show in `ps`.
@@ -52,6 +60,22 @@ DB_NAME="${LOCAL_DB_NAME:-blogdesk_$(whoami)_$(basename "$PWD" | tr -c 'A-Za-z0-
 [[ "$DB_NAME" =~ ^[A-Za-z][A-Za-z0-9_]{0,99}$ ]] || { echo "Invalid database name: $DB_NAME"; exit 1; }
 $DOCKER exec -e SQLCMDPASSWORD "$CONTAINER" "${SQLCMD[@]}" -Q "IF DB_ID(N'$DB_NAME') IS NULL CREATE DATABASE [$DB_NAME]" >/dev/null
 
+# Least-privilege login for the app. Password is an env var on this command, never argv.
+# sa remains only for this admin step and for migrations below.
+APP_LOGIN_SQL=$(cat <<'SQL'
+IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'blogdesk_app')
+    CREATE LOGIN blogdesk_app WITH PASSWORD = '$(BLOGDESK_APP_PASSWORD)';
+ELSE
+    ALTER LOGIN blogdesk_app WITH PASSWORD = '$(BLOGDESK_APP_PASSWORD)';
+IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = N'blogdesk_app')
+    CREATE USER blogdesk_app FOR LOGIN blogdesk_app;
+ALTER ROLE db_datareader ADD MEMBER blogdesk_app;
+ALTER ROLE db_datawriter ADD MEMBER blogdesk_app;
+GRANT EXECUTE TO blogdesk_app;
+SQL
+)
+BLOGDESK_APP_PASSWORD="$APP_PASSWORD" $DOCKER exec -e SQLCMDPASSWORD -e BLOGDESK_APP_PASSWORD "$CONTAINER" "${SQLCMD[@]}" -d "$DB_NAME" -Q "$APP_LOGIN_SQL" >/dev/null
+
 # Write .env.local (gitignored). Keep any non-DB values the developer already set.
 touch .env.local; chmod 600 .env.local
 grep -vE '^(DATABASE_URL|DB_SERVER|DB_PORT|DB_DATABASE|DB_USER|DB_PASSWORD|DB_ENCRYPT|DB_TRUST_SERVER_CERTIFICATE)=' .env.local > .env.local.tmp || true
@@ -59,8 +83,8 @@ cat >> .env.local.tmp <<ENV
 DB_SERVER=127.0.0.1
 DB_PORT=1433
 DB_DATABASE=$DB_NAME
-DB_USER=sa
-DB_PASSWORD=$SA_PASSWORD
+DB_USER=blogdesk_app
+DB_PASSWORD=$APP_PASSWORD
 DB_ENCRYPT=true
 DB_TRUST_SERVER_CERTIFICATE=true
 ENV
@@ -71,10 +95,10 @@ mv .env.local.tmp .env.local
 echo "Database $DB_NAME ready. Credentials are in .env.local (not committed)."
 
 if node -e "process.exit(require('./package.json').scripts['db:migrate']?0:1)"; then
-  # db:migrate reads .env.local itself or via dotenv; do not export secrets into this shell.
-  pnpm db:migrate
+  # Migrations need sa. Export it only for this command so the dev server keeps the app login.
+  DB_USER=sa DB_PASSWORD="$SA_PASSWORD" pnpm db:migrate
 else
-  echo "No db:migrate script yet; the app will bootstrap its schema on first request."
+  echo "No db:migrate script yet; the schema comes only from db:migrate."
 fi
 
 [ "${1:-}" = "--db-only" ] && exit 0
