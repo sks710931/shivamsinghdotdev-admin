@@ -466,7 +466,7 @@ if [[ -z "$xss_stored_body" ]]; then
 fi
 
 for frag in "script" "onerror" "onload" "onclick" "javascript:"; do
-  if grep -qi "$frag" "$resp_json"; then
+  if printf '%s' "$xss_stored_body" | grep -qi "$frag"; then
     record "stored XSS dangerous fragment '$frag' absent from response" "absent" "found"
   else
     record "stored XSS dangerous fragment '$frag' absent from response" "absent" "absent"
@@ -500,6 +500,7 @@ fi
 code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${iso_post_id}")"
 record "admin GET isolation post initial state" "200" "$code"
 iso_v_before="$(extract_json '.version // empty' "$resp_json")"
+iso_status_before="$(extract_json '.status // empty' "$resp_json")"
 iso_title_before="$(extract_json '.title // empty' "$resp_json")"
 iso_body_before="$(extract_json '.bodyHtml // empty' "$resp_json")"
 iso_summary_before="$(extract_json '.summary // empty' "$resp_json")"
@@ -562,14 +563,31 @@ record "guest GET admin post revision returns 404" "404" "$code"
 guest_rev_err="$(extract_json '.code // empty' "$resp_json")"
 record "guest GET admin post revision error code is not_found" "not_found" "$guest_rev_err"
 
+# Guest isolation on actions: as guest, POST publish, unpublish, archive and revision/publish on another user's (admin's) post must return 404
+guest_act_payload="$(jq -n --arg version "$iso_v_before" '{version: $version}')"
+
+code="$(call_api "$resp_json" -b "$guest_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$guest_act_payload" "${BASE}/api/posts/${iso_post_id}/publish")"
+record "guest POST admin post publish returns 404" "404" "$code"
+
+code="$(call_api "$resp_json" -b "$guest_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$guest_act_payload" "${BASE}/api/posts/${iso_post_id}/unpublish")"
+record "guest POST admin post unpublish returns 404" "404" "$code"
+
+code="$(call_api "$resp_json" -b "$guest_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$guest_act_payload" "${BASE}/api/posts/${iso_post_id}/archive")"
+record "guest POST admin post archive returns 404" "404" "$code"
+
+code="$(call_api "$resp_json" -b "$guest_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$guest_act_payload" "${BASE}/api/posts/${iso_post_id}/revision/publish")"
+record "guest POST admin post revision/publish returns 404" "404" "$code"
+
 # Assert post is unchanged afterwards
 code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${iso_post_id}")"
 record "admin GET isolation post after guest attempts" "200" "$code"
 iso_v_after="$(extract_json '.version // empty' "$resp_json")"
+iso_status_after="$(extract_json '.status // empty' "$resp_json")"
 iso_title_after="$(extract_json '.title // empty' "$resp_json")"
 iso_body_after="$(extract_json '.bodyHtml // empty' "$resp_json")"
 iso_summary_after="$(extract_json '.summary // empty' "$resp_json")"
 
+record "isolation post status unchanged after guest attempts" "$iso_status_before" "$iso_status_after"
 record "isolation post version unchanged after guest attempts" "$iso_v_before" "$iso_v_after"
 record "isolation post title unchanged after guest attempts" "$iso_title_before" "$iso_title_after"
 record "isolation post bodyHtml unchanged after guest attempts" "$iso_body_before" "$iso_body_after"
@@ -892,5 +910,158 @@ get_retry_rev_version="$(extract_json '.version // empty' "$resp_json")"
 record "retried revision title matches" "${rev_stale_title} Revision Retried" "$get_retry_rev_title"
 record "retried revision summary matches" "Updated pending revision summary after retry" "$get_retry_rev_summary"
 record "retried revision version matches GET /revision" "$pending_rev_v1" "$get_retry_rev_version"
+
+# -----------------------------------------------------------------------------
+# 16. Stored XSS via pending-revision approval path
+# -----------------------------------------------------------------------------
+rev_xss_slug_suffix="$(date +%s)-$RANDOM"
+rev_xss_slug="smoke-rev-xss-${rev_xss_slug_suffix}"
+rev_xss_title="Smoke Revision XSS ${rev_xss_slug_suffix}"
+
+rev_xss_create_payload="$(jq -n \
+  --arg title "$rev_xss_title" \
+  --arg slug "$rev_xss_slug" \
+  --arg summary "Initial clean draft for pending-revision XSS check" \
+  --arg bodyHtml "<p>Initial clean draft body</p>" \
+  '{title: $title, slug: $slug, summary: $summary, bodyHtml: $bodyHtml}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$rev_xss_create_payload" "${BASE}/api/posts")"
+record "admin create draft for pending-revision stored XSS check" "201" "$code"
+
+rev_xss_post_id="$(extract_json '.id // empty' "$resp_json")"
+rev_xss_v0="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$rev_xss_post_id" || -z "$rev_xss_v0" ]]; then
+  printf 'FAIL expected created pending-revision XSS post to return id and version\n'
+  exit 1
+fi
+
+# Publish the post
+rev_xss_pub_payload="$(jq -n --arg version "$rev_xss_v0" '{version: $version}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$rev_xss_pub_payload" "${BASE}/api/posts/${rev_xss_post_id}/publish")"
+record "admin publish post for pending-revision stored XSS check" "200" "$code"
+
+rev_xss_v_pub="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$rev_xss_v_pub" ]]; then
+  printf 'FAIL expected published post to have a version\n'
+  exit 1
+fi
+
+# Edit it with an XSS payload to create a pending revision
+rev_xss_dangerous_body='<p>Safe start</p><script>alert(1)</script><img src="https://example.com/test.png" onerror="alert(1)"><a href="javascript:alert(1)">click</a><p>Safe end</p>'
+
+rev_xss_edit_payload="$(jq -n \
+  --arg version "$rev_xss_v_pub" \
+  --arg title "${rev_xss_title} Pending Revision" \
+  --arg summary "Pending revision with XSS" \
+  --arg bodyHtml "$rev_xss_dangerous_body" \
+  '{version: $version, title: $title, summary: $summary, bodyHtml: $bodyHtml}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X PATCH --data-binary "$rev_xss_edit_payload" "${BASE}/api/posts/${rev_xss_post_id}")"
+record "admin edit published post with XSS to create pending revision" "200" "$code"
+
+rev_xss_rev_version="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$rev_xss_rev_version" ]]; then
+  printf 'FAIL expected pending revision to have a version\n'
+  exit 1
+fi
+
+# Approve revision via POST /api/posts/[id]/revision/publish as admin
+rev_xss_approve_payload="$(jq -n --arg version "$rev_xss_rev_version" '{version: $version}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$rev_xss_approve_payload" "${BASE}/api/posts/${rev_xss_post_id}/revision/publish")"
+record "admin approve pending revision with XSS via POST /api/posts/[id]/revision/publish" "200" "$code"
+
+# GET live post and assert live bodyHtml contains no script/onerror/javascript: fragments
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${rev_xss_post_id}")"
+record "admin GET live post after revision approval for stored XSS check" "200" "$code"
+
+rev_xss_live_body="$(extract_json '.bodyHtml // empty' "$resp_json")"
+if [[ -z "$rev_xss_live_body" ]]; then
+  printf 'FAIL expected live post to contain bodyHtml\n'
+  exit 1
+fi
+
+for frag in "script" "onerror" "javascript:"; do
+  if printf '%s' "$rev_xss_live_body" | grep -qi "$frag"; then
+    record "pending-revision XSS dangerous fragment '$frag' absent from live bodyHtml" "absent" "found"
+  else
+    record "pending-revision XSS dangerous fragment '$frag' absent from live bodyHtml" "absent" "absent"
+  fi
+done
+
+# -----------------------------------------------------------------------------
+# 17. Safe content survives sanitizing
+# -----------------------------------------------------------------------------
+safe_slug_suffix="$(date +%s)-$RANDOM"
+safe_slug="smoke-safe-${safe_slug_suffix}"
+safe_title="Smoke Safe Content ${safe_slug_suffix}"
+safe_body='<p>Safe paragraph with <strong>bold text</strong>, <a href="https://example.com">example link</a>, and <img src="https://example.com/test.png" alt="safe image" />.</p>'
+
+safe_create_payload="$(jq -n \
+  --arg title "$safe_title" \
+  --arg slug "$safe_slug" \
+  --arg summary "Draft with benign markup" \
+  --arg bodyHtml "$safe_body" \
+  '{title: $title, slug: $slug, summary: $summary, bodyHtml: $bodyHtml}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$safe_create_payload" "${BASE}/api/posts")"
+record "admin create draft with benign markup" "201" "$code"
+
+safe_post_id="$(extract_json '.id // empty' "$resp_json")"
+safe_v0="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$safe_post_id" || -z "$safe_v0" ]]; then
+  printf 'FAIL expected created safe content post to return id and version\n'
+  exit 1
+fi
+
+# Save draft (PATCH) with benign markup
+safe_save_payload="$(jq -n \
+  --arg version "$safe_v0" \
+  --arg summary "Saved draft with benign markup" \
+  --arg bodyHtml "$safe_body" \
+  '{version: $version, summary: $summary, bodyHtml: $bodyHtml}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X PATCH --data-binary "$safe_save_payload" "${BASE}/api/posts/${safe_post_id}")"
+record "admin save draft with benign markup" "200" "$code"
+
+safe_v1="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$safe_v1" || "$safe_v1" == "$safe_v0" ]]; then
+  printf 'FAIL expected save draft with benign markup to return updated version\n'
+  exit 1
+fi
+
+# GET draft and assert benign markup is present in bodyHtml after save
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${safe_post_id}")"
+record "admin GET draft after save for benign markup check" "200" "$code"
+safe_saved_body="$(extract_json '.bodyHtml // empty' "$resp_json")"
+if [[ -z "$safe_saved_body" ]]; then
+  printf 'FAIL expected draft to contain bodyHtml after save\n'
+  exit 1
+fi
+
+for frag in "<p>" "<strong>" "href=\"https://example.com\"" "<img" "src=\"https://example.com"; do
+  if printf '%s' "$safe_saved_body" | grep -qiF "$frag"; then
+    record "benign markup fragment '$frag' present in bodyHtml after save" "present" "present"
+  else
+    record "benign markup fragment '$frag' present in bodyHtml after save" "present" "absent"
+  fi
+done
+
+# Publish the post
+safe_pub_payload="$(jq -n --arg version "$safe_v1" '{version: $version}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$safe_pub_payload" "${BASE}/api/posts/${safe_post_id}/publish")"
+record "admin publish post with benign markup" "200" "$code"
+
+# GET published post and assert benign markup is present in bodyHtml after publish
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${safe_post_id}")"
+record "admin GET published post for benign markup check" "200" "$code"
+safe_pub_body="$(extract_json '.bodyHtml // empty' "$resp_json")"
+if [[ -z "$safe_pub_body" ]]; then
+  printf 'FAIL expected published post to contain bodyHtml after publish\n'
+  exit 1
+fi
+
+for frag in "<p>" "<strong>" "href=\"https://example.com\"" "<img" "src=\"https://example.com"; do
+  if printf '%s' "$safe_pub_body" | grep -qiF "$frag"; then
+    record "benign markup fragment '$frag' present in bodyHtml after publish" "present" "present"
+  else
+    record "benign markup fragment '$frag' present in bodyHtml after publish" "present" "absent"
+  fi
+done
 
 exit "$failed"
