@@ -33,8 +33,9 @@ describe.skipIf(!posts || typeof posts.getPostById !== "function" || !process.en
     const rows = await posts.listPosts(guest, { pageSize: 100 });
     expect(Array.isArray(rows.items)).toBe(true);
     expect(rows.items.map((r: { id: string }) => r.id.toUpperCase())).not.toContain(otherPostId.toUpperCase());
-    const adminRows = await posts.listPosts(admin, { pageSize: 100 });
-    expect(adminRows.items.map((r: { id: string }) => r.id.toUpperCase())).toContain(otherPostId.toUpperCase());
+    const adminPost = await posts.getPostById(admin, otherPostId);
+    expect(adminPost).not.toBeNull();
+    expect(String(adminPost.id).toUpperCase()).toBe(otherPostId.toUpperCase());
   });
 
   it("a guest getPostById on another author post is 404 not_found", async () => {
