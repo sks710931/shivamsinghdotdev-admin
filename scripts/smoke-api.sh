@@ -514,6 +514,37 @@ record "guest GET admin post returns 404" "404" "$code"
 guest_get_err="$(extract_json '.code // empty' "$resp_json")"
 record "guest GET admin post error code is not_found" "not_found" "$guest_get_err"
 
+# Cross-user 404 indistinguishable from fake ID (byte-for-byte identical raw bodies)
+random_uuid=""
+if command -v uuidgen >/dev/null 2>&1; then
+  random_uuid="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+elif [[ -r /proc/sys/kernel/random/uuid ]]; then
+  random_uuid="$(cat /proc/sys/kernel/random/uuid)"
+else
+  random_uuid="$(node -e 'process.stdout.write(crypto.randomUUID())')"
+fi
+
+if [[ -z "$random_uuid" ]]; then
+  printf 'FAIL unable to generate random UUID\n'
+  exit 1
+fi
+
+resp_random="${cookie_dir}/resp_random.json"
+resp_admin_post="${cookie_dir}/resp_admin_post.json"
+cp "$resp_json" "$resp_admin_post"
+
+code_random="$(call_api "$resp_random" -b "$guest_jar" "${BASE}/api/posts/${random_uuid}")"
+record "guest GET random uuid returns 404" "404" "$code_random"
+
+raw_random="$(cat "$resp_random")"
+raw_admin="$(cat "$resp_admin_post")"
+
+cmp_result="differ"
+if [[ "$code" == "404" && "$code_random" == "404" ]] && cmp -s "$resp_random" "$resp_admin_post" && [[ "$raw_random" == "$raw_admin" ]]; then
+  cmp_result="identical"
+fi
+record "guest GET random uuid and admin post response bodies are byte-for-byte identical" "identical" "$cmp_result"
+
 # Guest tries PATCH on admin's post -> 404 not_found
 guest_patch_payload="$(jq -n \
   --arg version "$iso_v_before" \
@@ -651,5 +682,215 @@ code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${unpub_post_id
 record "admin GET /revision after unpublish returns 404" "404" "$code"
 unpub_rev_err="$(extract_json '.code // empty' "$resp_json")"
 record "admin GET /revision after unpublish error code is not_found" "not_found" "$unpub_rev_err"
+
+# -----------------------------------------------------------------------------
+# 15. Contract v1.2.1 checks
+# -----------------------------------------------------------------------------
+
+# (1) POST /api/posts response includes a non-empty version, and that version works directly for the first PATCH without a GET
+c121_slug_suffix="$(date +%s)-$RANDOM"
+c121_slug="smoke-v121-${c121_slug_suffix}"
+c121_title="Smoke v121 ${c121_slug_suffix}"
+c121_summary="Contract v1.2.1 initial summary"
+c121_body="<p>Initial contract v1.2.1 draft body content</p>"
+
+c121_create_payload="$(jq -n \
+  --arg title "$c121_title" \
+  --arg slug "$c121_slug" \
+  --arg summary "$c121_summary" \
+  --arg tags "contract,v121" \
+  --arg seoTitle "Contract v1.2.1 SEO" \
+  --arg seoKeywords "v121,contract" \
+  --arg bodyHtml "$c121_body" \
+  '{title: $title, slug: $slug, summary: $summary, tags: $tags, seoTitle: $seoTitle, seoKeywords: $seoKeywords, bodyHtml: $bodyHtml}')"
+
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$c121_create_payload" "${BASE}/api/posts")"
+record "admin POST /api/posts (contract v1.2.1)" "201" "$code"
+
+c121_post_id="$(extract_json '.id // empty' "$resp_json")"
+if [[ -z "$c121_post_id" ]]; then
+  printf 'FAIL expected contract v1.2.1 created post to return an id\n'
+  exit 1
+fi
+
+c121_v0="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$c121_v0" ]]; then
+  printf 'FAIL expected contract v1.2.1 POST /api/posts to return a version\n'
+  exit 1
+fi
+record "POST /api/posts response includes non-empty version" "non-empty" "$([ -n "$c121_v0" ] && echo "non-empty" || echo "empty")"
+
+# First PATCH directly using c121_v0 without calling GET
+c121_first_patch_payload="$(jq -n \
+  --arg version "$c121_v0" \
+  --arg summary "Direct patch summary without GET" \
+  --arg bodyHtml "<p>Directly patched body without GET</p>" \
+  '{version: $version, summary: $summary, bodyHtml: $bodyHtml}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X PATCH --data-binary "$c121_first_patch_payload" "${BASE}/api/posts/${c121_post_id}")"
+record "first PATCH using create version without GET returns 200" "200" "$code"
+
+c121_v1="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$c121_v1" || "$c121_v1" == "$c121_v0" ]]; then
+  printf 'FAIL expected first PATCH to return an updated version\n'
+  exit 1
+fi
+
+# (2) admin POST /api/posts with status:published still creates a draft (GET shows status draft)
+pub_attempt_slug_suffix="$(date +%s)-$RANDOM"
+pub_attempt_slug="smoke-v121-pubdraft-${pub_attempt_slug_suffix}"
+pub_attempt_title="Smoke v121 PubDraft ${pub_attempt_slug_suffix}"
+pub_attempt_summary="Draft created with status:published"
+pub_attempt_body="<p>Body for status:published create attempt</p>"
+
+pub_attempt_payload="$(jq -n \
+  --arg title "$pub_attempt_title" \
+  --arg slug "$pub_attempt_slug" \
+  --arg summary "$pub_attempt_summary" \
+  --arg bodyHtml "$pub_attempt_body" \
+  --arg status "published" \
+  '{title: $title, slug: $slug, summary: $summary, bodyHtml: $bodyHtml, status: $status}')"
+
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$pub_attempt_payload" "${BASE}/api/posts")"
+record "admin POST /api/posts with status:published returns 201" "201" "$code"
+
+pub_attempt_id="$(extract_json '.id // empty' "$resp_json")"
+if [[ -z "$pub_attempt_id" ]]; then
+  printf 'FAIL expected status:published create attempt to return an id\n'
+  exit 1
+fi
+
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${pub_attempt_id}")"
+record "admin GET /api/posts/[id] after status:published create returns 200" "200" "$code"
+
+pub_attempt_status="$(extract_json '.status // empty' "$resp_json")"
+record "admin POST with status:published creates draft (GET shows status draft)" "draft" "$pub_attempt_status"
+
+# (3) Stale-version PATCH returns 409 stale_version and response body includes current version,
+# and retrying PATCH with that version succeeds;
+# for a published post with a pending revision, the 409 version equals the pending revision's version.
+
+# 3a. Draft post stale-version PATCH
+stale_draft_payload="$(jq -n \
+  --arg version "$c121_v0" \
+  --arg title "Stale draft edit should fail" \
+  '{version: $version, title: $title}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X PATCH --data-binary "$stale_draft_payload" "${BASE}/api/posts/${c121_post_id}")"
+record "draft stale-version PATCH returns 409" "409" "$code"
+
+stale_draft_code="$(extract_json '.code // empty' "$resp_json")"
+record "draft stale-version error code is stale_version" "stale_version" "$stale_draft_code"
+
+stale_draft_resp_version="$(extract_json '.version // empty' "$resp_json")"
+record "draft stale-version 409 response body includes current version" "$c121_v1" "$stale_draft_resp_version"
+
+# Retrying the draft PATCH with the version from 409 succeeds
+retry_draft_payload="$(jq -n \
+  --arg version "$stale_draft_resp_version" \
+  --arg title "${c121_title} Retried" \
+  '{version: $version, title: $title}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X PATCH --data-binary "$retry_draft_payload" "${BASE}/api/posts/${c121_post_id}")"
+record "retrying draft PATCH with version from 409 succeeds" "200" "$code"
+
+c121_v2="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$c121_v2" || "$c121_v2" == "$stale_draft_resp_version" ]]; then
+  printf 'FAIL expected retried draft PATCH to return an updated version\n'
+  exit 1
+fi
+
+# 3b. Published post with pending revision
+rev_stale_slug_suffix="$(date +%s)-$RANDOM"
+rev_stale_slug="smoke-v121-revstale-${rev_stale_slug_suffix}"
+rev_stale_title="Smoke v121 RevStale ${rev_stale_slug_suffix}"
+rev_stale_summary="Published post for revision stale check"
+rev_stale_body="<p>Body for revision stale check</p>"
+
+rev_stale_create_payload="$(jq -n \
+  --arg title "$rev_stale_title" \
+  --arg slug "$rev_stale_slug" \
+  --arg summary "$rev_stale_summary" \
+  --arg bodyHtml "$rev_stale_body" \
+  '{title: $title, slug: $slug, summary: $summary, bodyHtml: $bodyHtml}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$rev_stale_create_payload" "${BASE}/api/posts")"
+record "admin create post for pending revision stale check" "201" "$code"
+
+rev_stale_post_id="$(extract_json '.id // empty' "$resp_json")"
+rev_stale_v0="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$rev_stale_post_id" || -z "$rev_stale_v0" ]]; then
+  printf 'FAIL expected created post to return id and version\n'
+  exit 1
+fi
+
+# Publish the post
+rev_stale_pub_payload="$(jq -n --arg version "$rev_stale_v0" '{version: $version}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$rev_stale_pub_payload" "${BASE}/api/posts/${rev_stale_post_id}/publish")"
+record "admin publish post for pending revision stale check" "200" "$code"
+rev_stale_live_version="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$rev_stale_live_version" ]]; then
+  printf 'FAIL expected published post to have a version\n'
+  exit 1
+fi
+
+# Create a pending revision by PATCHing the published post
+rev_stale_edit_payload="$(jq -n \
+  --arg version "$rev_stale_live_version" \
+  --arg title "${rev_stale_title} Pending Revision" \
+  --arg summary "Pending revision summary" \
+  --arg bodyHtml "<p>Pending revision body content</p>" \
+  '{version: $version, title: $title, summary: $summary, bodyHtml: $bodyHtml}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X PATCH --data-binary "$rev_stale_edit_payload" "${BASE}/api/posts/${rev_stale_post_id}")"
+record "admin create pending revision on published post" "200" "$code"
+
+pending_rev_v0="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$pending_rev_v0" ]]; then
+  printf 'FAIL expected pending revision to have a version\n'
+  exit 1
+fi
+
+# Confirm pending revision version via GET /revision
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${rev_stale_post_id}/revision")"
+record "admin GET /revision before stale PATCH returns 200" "200" "$code"
+get_pending_rev_v0="$(extract_json '.version // empty' "$resp_json")"
+record "GET /revision version matches pending revision version" "$pending_rev_v0" "$get_pending_rev_v0"
+
+# Send PATCH with stale version (e.g. rev_stale_live_version, which is superseded by pending revision)
+rev_stale_bad_patch="$(jq -n \
+  --arg version "$rev_stale_live_version" \
+  --arg title "${rev_stale_title} Stale Revision Edit" \
+  '{version: $version, title: $title}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X PATCH --data-binary "$rev_stale_bad_patch" "${BASE}/api/posts/${rev_stale_post_id}")"
+record "stale-version PATCH on published post with pending revision returns 409" "409" "$code"
+
+rev_stale_err_code="$(extract_json '.code // empty' "$resp_json")"
+record "stale-version error code on published post with revision is stale_version" "stale_version" "$rev_stale_err_code"
+
+# Crucial contract v1.2.1 check:
+# for a published post with a pending revision, the 409 version equals the pending revision's version
+rev_stale_resp_version="$(extract_json '.version // empty' "$resp_json")"
+record "published post with pending revision 409 version equals pending revision version" "$pending_rev_v0" "$rev_stale_resp_version"
+
+# Retrying the PATCH with that version succeeds
+retry_rev_patch_payload="$(jq -n \
+  --arg version "$rev_stale_resp_version" \
+  --arg title "${rev_stale_title} Revision Retried" \
+  --arg summary "Updated pending revision summary after retry" \
+  '{version: $version, title: $title, summary: $summary}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X PATCH --data-binary "$retry_rev_patch_payload" "${BASE}/api/posts/${rev_stale_post_id}")"
+record "retrying revision PATCH with 409 version succeeds" "200" "$code"
+
+pending_rev_v1="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$pending_rev_v1" || "$pending_rev_v1" == "$rev_stale_resp_version" ]]; then
+  printf 'FAIL expected retried revision PATCH to return an updated version\n'
+  exit 1
+fi
+
+# Verify via GET /revision that retry succeeded and updated the pending revision
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${rev_stale_post_id}/revision")"
+record "admin GET /revision after retried revision PATCH returns 200" "200" "$code"
+get_retry_rev_title="$(extract_json '.title // empty' "$resp_json")"
+get_retry_rev_summary="$(extract_json '.summary // empty' "$resp_json")"
+get_retry_rev_version="$(extract_json '.version // empty' "$resp_json")"
+record "retried revision title matches" "${rev_stale_title} Revision Retried" "$get_retry_rev_title"
+record "retried revision summary matches" "Updated pending revision summary after retry" "$get_retry_rev_summary"
+record "retried revision version matches GET /revision" "$pending_rev_v1" "$get_retry_rev_version"
 
 exit "$failed"
