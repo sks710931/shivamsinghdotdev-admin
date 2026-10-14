@@ -31,3 +31,48 @@ jobs:
         run: |
           if node -e "process.exit(require('./package.json').scripts.test?0:1)"; then pnpm test; else echo "No test script yet"; fi
       - run: pnpm build
+
+  migrate:
+    name: DB migrations (SQL Server)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # throwaway, CI-only ephemeral container
+      CI_SA_PASSWORD: "Ci_Throwaway_Pa55!"
+      DB_SERVER: localhost
+      DB_PORT: "1433"
+      DB_DATABASE: blogdesk_ci
+      DB_USER: sa
+      DB_PASSWORD: "Ci_Throwaway_Pa55!"
+      DB_ENCRYPT: "true"
+      DB_TRUST_SERVER_CERTIFICATE: "true"
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_SA_PASSWORD: "Ci_Throwaway_Pa55!"
+        ports:
+          - 1433:1433
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Wait for SQL Server and create DB
+        run: |
+          for i in $(seq 1 60); do
+            if docker exec ${{ job.services.mssql.id }} /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$DB_PASSWORD" -Q "SELECT 1"; then
+              docker exec ${{ job.services.mssql.id }} /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$DB_PASSWORD" -Q "IF DB_ID(N'blogdesk_ci') IS NULL CREATE DATABASE blogdesk_ci"
+              exit $?
+            fi
+            sleep 2
+          done
+          exit 1
+      - name: Migrate (first run)
+        run: pnpm db:migrate
+      - name: Migrate (second run, must be idempotent)
+        run: pnpm db:migrate
