@@ -5,26 +5,11 @@ import * as mod from "@/server/post-publish";
 import * as posts from "@/server/posts";
 import * as postRevision from "@/server/post-revision";
 import * as postUpdate from "@/server/post-update";
+import { shouldSkip } from "./require-db-env";
 
 type Actor = { id: string; role: "admin" | "guest" };
 type Post = { id: string; slug: string; version: string; title?: string };
 type ErrLike = { status?: number; code?: string };
-
-const REQUIRED_ENVS = [
-  "DB_SERVER",
-  "TEST_ADMIN_ID",
-  "TEST_GUEST_ID",
-  "TEST_OTHER_POST_ID",
-] as const;
-
-const missingEnvs = REQUIRED_ENVS.filter((key) => !process.env[key]);
-const shouldSkip = missingEnvs.length > 0;
-
-if (process.env.CI && shouldSkip) {
-  throw new Error(
-    `CI is set but required environment variables are missing: ${missingEnvs.join(", ")}`,
-  );
-}
 
 const admin: Actor = { id: String(process.env.TEST_ADMIN_ID ?? ""), role: "admin" };
 const guest: Actor = { id: String(process.env.TEST_GUEST_ID ?? ""), role: "guest" };
