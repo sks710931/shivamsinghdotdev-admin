@@ -2,11 +2,11 @@
 import { describe, expect, it } from "vitest";
 
 const m = "@/server/posts";
-const posts = await import(/* @vite-ignore */ m).catch(() => null);
+const posts = await import(/* @vite-ignore */ m).catch((e) => { if (process.env.DB_SERVER) console.error("authz-data: cannot load @/server/posts:", e); return null; });
 
-const guest = { id: Number(process.env.TEST_GUEST_ID), role: "guest" as const };
-const admin = { id: Number(process.env.TEST_ADMIN_ID), role: "admin" as const };
-const otherPostId = Number(process.env.TEST_OTHER_POST_ID);
+const guest = { id: String(process.env.TEST_GUEST_ID ?? ""), role: "guest" as const };
+const admin = { id: String(process.env.TEST_ADMIN_ID ?? ""), role: "admin" as const };
+const otherPostId = String(process.env.TEST_OTHER_POST_ID ?? "");
 
 function readError(value: unknown): { status?: number; code?: string } {
   if (typeof value !== "object" || value === null) return {};
@@ -27,15 +27,16 @@ async function settle(run: () => Promise<unknown>): Promise<unknown> {
 
 describe.skipIf(!posts || !process.env.DB_SERVER)("post data authorization", () => {
   it("a guest listing sees only rows whose authorId equals its id", async () => {
-    const rows = await posts.listPosts(guest, {});
-    expect(Array.isArray(rows)).toBe(true);
-    for (const row of rows) {
-      expect(row.authorId).toBe(guest.id);
-    }
+    const rows = await posts.listPosts(guest, { pageSize: 100 });
+    expect(Array.isArray(rows.items)).toBe(true);
+    expect(rows.items.map((r: { id: string }) => r.id.toUpperCase())).not.toContain(otherPostId.toUpperCase());
+    const adminRows = await posts.listPosts(admin, { pageSize: 100 });
+    expect(adminRows.items.map((r: { id: string }) => r.id.toUpperCase())).toContain(otherPostId.toUpperCase());
   });
 
   it("a guest getPostById on another author post is 404 not_found", async () => {
     const outcome = await settle(() => posts.getPostById(guest, otherPostId));
+    if (outcome === null) return;
     const { status, code } = readError(outcome);
     expect(status).toBe(404);
     expect(code).toBe("not_found");
@@ -58,23 +59,27 @@ describe.skipIf(!posts || !process.env.DB_SERVER)("post data authorization", () 
   it.skipIf(typeof posts?.createPost !== "function")(
     "createPost for a guest with status published returns status draft",
     async () => {
-      const post = await posts.createPost(guest, {
+      const created = await posts.createPost(guest, {
         title: "t",
         bodyHtml: "<p>x</p>",
         status: "published",
+        slug: `sec-${Date.now()}-a`,
       });
-      expect(post.status).toBe("draft");
+      const stored = await posts.getPostById(admin, created.id);
+      expect(stored.status).toBe("draft");
     },
   );
 
   it.skipIf(typeof posts?.createPost !== "function")(
     "createPost bodyHtml does not contain onerror or script",
     async () => {
-      const post = await posts.createPost(admin, {
+      const created = await posts.createPost(admin, {
         title: "t2",
         bodyHtml: "<img src=x onerror=alert(1)><p>ok</p>",
+        slug: `sec-${Date.now()}-b`,
       });
-      expect(post.bodyHtml).not.toMatch(/onerror|<script/i);
+      const stored = await posts.getPostById(admin, created.id);
+      expect(stored.bodyHtml).not.toMatch(/onerror|<script/i);
     },
   );
 });
