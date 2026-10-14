@@ -5,6 +5,13 @@ import { PostEditor } from "@/app/(desk)/posts/post-editor";
 import { RevisionReview } from "@/app/(desk)/posts/revision-review";
 import type { PostDetail } from "@/lib/posts-client";
 import { safeHtml } from "@/lib/safe-html";
+import {
+  ALLOWED_ATTRIBUTES,
+  ALLOWED_SCHEMES,
+  ALLOWED_SCHEMES_BY_TAG,
+  ALLOWED_TAGS,
+  NON_TEXT_TAGS,
+} from "@/lib/sanitize-schema";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
@@ -159,6 +166,105 @@ describe("safeHtml client helper", () => {
     expect(output).toContain('class="language-js"');
     expect(output).not.toContain("evil-class");
     expect(output).not.toContain('class="danger"');
+  });
+
+  it("rejects http img src while preserving https and same-origin /media/ sources", () => {
+    // Insecure HTTP img sources must be rejected and stripped
+    expect(safeHtml('<img src="http://example.com/insecure.png">')).toBe("");
+    expect(safeHtml('<img src="http://example.com/insecure.png" alt="Insecure image">')).toBe("");
+    expect(safeHtml('<img src="HTTP://EXAMPLE.COM/INSECURE.PNG" alt="Uppercase HTTP">')).toBe("");
+
+    // Non-/media/ relative img sources must be rejected
+    expect(safeHtml('<img src="/images/pic.png" alt="Non-media relative">')).toBe("");
+
+    // HTTPS img sources must be preserved
+    const secureImg = safeHtml('<img src="https://example.com/secure.png" alt="Secure image">');
+    expect(secureImg).toContain('src="https://example.com/secure.png"');
+    expect(secureImg).toContain('alt="Secure image"');
+
+    // Same-origin /media/ img sources must be preserved
+    const mediaImg = safeHtml('<img src="/media/post-1/hero.png" alt="Media image">');
+    expect(mediaImg).toContain('src="/media/post-1/hero.png"');
+    expect(mediaImg).toContain('alt="Media image"');
+
+    // Mixed content: insecure img is removed while surrounding safe markup is preserved
+    const mixed = safeHtml('<p>Before</p><img src="http://example.com/bad.png" alt="bad"><p>After</p>');
+    expect(mixed).toBe("<p>Before</p><p>After</p>");
+
+    // a href allows http per ALLOWED_SCHEMES_BY_TAG, while img src rejects http
+    const linkAndImg = safeHtml('<a href="http://example.com">Link</a><img src="http://example.com/bad.png">');
+    expect(linkAndImg).toContain('href="http://example.com"');
+    expect(linkAndImg).not.toContain("<img");
+  });
+
+  it("returns empty string during SSR when no window exists", () => {
+    const originalWindow = globalThis.window;
+    try {
+      // @ts-expect-error Simulating SSR environment where window is undefined
+      delete globalThis.window;
+      expect(typeof window).toBe("undefined");
+      expect(safeHtml("<p>Hello SSR</p>")).toBe("");
+      expect(safeHtml('<img src="https://example.com/photo.png">')).toBe("");
+      expect(safeHtml('<a href="https://example.com">Link</a>')).toBe("");
+    } finally {
+      globalThis.window = originalWindow;
+    }
+
+    // Verify normal client behavior resumes once window is restored
+    expect(safeHtml("<p>Hello Client</p>")).toBe("<p>Hello Client</p>");
+  });
+});
+
+describe("sanitize-schema allow-list constants", () => {
+  it("deep-freezes all exported allow-list constants and their inner arrays/objects", () => {
+    expect(Object.isFrozen(ALLOWED_TAGS)).toBe(true);
+    expect(Object.isFrozen(ALLOWED_SCHEMES)).toBe(true);
+    expect(Object.isFrozen(ALLOWED_SCHEMES_BY_TAG)).toBe(true);
+    expect(Object.isFrozen(ALLOWED_SCHEMES_BY_TAG.a)).toBe(true);
+    expect(Object.isFrozen(ALLOWED_SCHEMES_BY_TAG.img)).toBe(true);
+    expect(Object.isFrozen(NON_TEXT_TAGS)).toBe(true);
+    expect(Object.isFrozen(ALLOWED_ATTRIBUTES)).toBe(true);
+
+    for (const tag of Object.keys(ALLOWED_ATTRIBUTES)) {
+      expect(Object.isFrozen(ALLOWED_ATTRIBUTES[tag])).toBe(true);
+    }
+  });
+
+  it("prevents mutations to allow-list constants at runtime", () => {
+    expect(() => {
+      // @ts-expect-error verifying runtime freeze
+      ALLOWED_TAGS.push("evil");
+    }).toThrow();
+
+    expect(() => {
+      // @ts-expect-error verifying runtime freeze
+      ALLOWED_SCHEMES.push("ftp");
+    }).toThrow();
+
+    expect(() => {
+      // @ts-expect-error verifying runtime freeze
+      ALLOWED_ATTRIBUTES.a.push("onclick");
+    }).toThrow();
+
+    expect(() => {
+      // @ts-expect-error verifying runtime freeze
+      ALLOWED_ATTRIBUTES.div = Object.freeze(["class"]);
+    }).toThrow();
+
+    expect(() => {
+      // @ts-expect-error verifying runtime freeze
+      ALLOWED_SCHEMES_BY_TAG.img.push("http");
+    }).toThrow();
+
+    expect(() => {
+      // @ts-expect-error verifying runtime freeze
+      ALLOWED_SCHEMES_BY_TAG.video = Object.freeze(["https"]);
+    }).toThrow();
+
+    expect(() => {
+      // @ts-expect-error verifying runtime freeze
+      NON_TEXT_TAGS.push("div");
+    }).toThrow();
   });
 });
 

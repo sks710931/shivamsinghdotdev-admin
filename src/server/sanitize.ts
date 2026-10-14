@@ -1,6 +1,20 @@
 import sanitize from "sanitize-html";
 
-import { ALLOWED_ATTRIBUTES, ALLOWED_SCHEMES, ALLOWED_TAGS, NON_TEXT_TAGS } from "@/lib/sanitize-schema";
+import {
+  ALLOWED_ATTRIBUTES,
+  ALLOWED_SCHEMES,
+  ALLOWED_SCHEMES_BY_TAG,
+  ALLOWED_TAGS,
+  NON_TEXT_TAGS,
+} from "@/lib/sanitize-schema";
+
+const SERVER_ALLOWED_ATTRIBUTES: Record<string, string[]> = Object.fromEntries(
+  Object.entries(ALLOWED_ATTRIBUTES).map(([tag, attrs]) => [tag, [...attrs]])
+);
+
+const SERVER_ALLOWED_SCHEMES_BY_TAG: Record<string, string[]> = Object.fromEntries(
+  Object.entries(ALLOWED_SCHEMES_BY_TAG).map(([tag, schemes]) => [tag, schemes ? [...schemes] : []])
+);
 
 const LANGUAGE = (c: string) => /^language-[a-z0-9+#-]+$/i.test(c);
 const TASK_LIST = (c: string) => c === "task-list";
@@ -29,9 +43,9 @@ export function sanitizeHtml(html: string): string {
 
   return sanitize(html ?? "", {
     allowedTags: [...ALLOWED_TAGS],
-    allowedAttributes: ALLOWED_ATTRIBUTES,
+    allowedAttributes: SERVER_ALLOWED_ATTRIBUTES,
     allowedSchemes: [...ALLOWED_SCHEMES],
-    allowedSchemesByTag: { a: ["http", "https", "mailto"], img: ["https"] },
+    allowedSchemesByTag: SERVER_ALLOWED_SCHEMES_BY_TAG,
     allowedSchemesAppliedToAttributes: ["href", "src"],
     allowProtocolRelative: false,
     disallowedTagsMode: "discard",

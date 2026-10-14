@@ -1,7 +1,7 @@
 import DOMPurify from "dompurify";
 import type { Config, DOMPurify as DOMPurifyInstance, UponSanitizeAttributeHookEvent } from "dompurify";
 
-import { ALLOWED_ATTRIBUTES, ALLOWED_TAGS } from "./sanitize-schema";
+import { ALLOWED_ATTRIBUTES, ALLOWED_SCHEMES_BY_TAG, ALLOWED_TAGS } from "./sanitize-schema";
 
 const ALL_ALLOWED_ATTR = Array.from(
   new Set(
@@ -32,10 +32,8 @@ function isSafeHref(value: string): boolean {
   }
   try {
     const parsed = new URL(trimmed, "https://example.invalid");
-    if ((parsed.protocol === "http:" || parsed.protocol === "https:") && /^https?:/i.test(trimmed)) {
-      return true;
-    }
-    if (parsed.protocol === "mailto:" && /^mailto:/i.test(trimmed)) {
+    const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
+    if (ALLOWED_SCHEMES_BY_TAG.a.includes(scheme) && new RegExp(`^${scheme}:`, "i").test(trimmed)) {
       return true;
     }
     if (trimmed.startsWith("/") && !trimmed.startsWith("//") && !trimmed.startsWith("/\\")) {
@@ -58,7 +56,11 @@ function isSafeImgSrc(value: string): boolean {
   if (!trimmed) {
     return false;
   }
-  if (trimmed.startsWith("https://")) {
+  const allowedImgSchemes = ALLOWED_SCHEMES_BY_TAG.img;
+  const hasAllowedScheme = allowedImgSchemes.some((scheme) =>
+    trimmed.toLowerCase().startsWith(`${scheme}://`)
+  );
+  if (hasAllowedScheme) {
     return true;
   }
   if (/^\/media\/[^/\\]/.test(trimmed)) {
@@ -67,14 +69,14 @@ function isSafeImgSrc(value: string): boolean {
   return false;
 }
 
-const DOMPURIFY_CONFIG: Config = {
+const DOMPURIFY_CONFIG: Config = Object.freeze({
   ALLOWED_TAGS: [...ALLOWED_TAGS],
   ALLOWED_ATTR: ALL_ALLOWED_ATTR,
   ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
   ALLOW_DATA_ATTR: false,
   ALLOW_ARIA_ATTR: false,
   ALLOW_UNKNOWN_PROTOCOLS: false,
-};
+});
 
 function onSanitizeAttribute(currentNode: Element, data: UponSanitizeAttributeHookEvent): void {
   const attrName = data.attrName.toLowerCase();
@@ -154,7 +156,7 @@ function getPurify(): DOMPurifyInstance | null {
     return null;
   }
   if (!configuredPurify) {
-    const purify = typeof DOMPurify.sanitize === "function" ? DOMPurify : DOMPurify(window);
+    const purify = DOMPurify(window);
     purify.addHook("uponSanitizeAttribute", onSanitizeAttribute);
     purify.addHook("afterSanitizeAttributes", onAfterSanitizeAttributes);
     configuredPurify = purify;
@@ -163,10 +165,18 @@ function getPurify(): DOMPurifyInstance | null {
 }
 
 /**
- * Sanitizes HTML on the client using DOMPurify with the shared slice-1 allow-list.
- * Explicitly forbids event handlers and javascript:/data: URLs.
+ * Sanitizes HTML on the client using a private DOMPurify instance with the shared slice-1 allow-list.
+ * Explicitly forbids event handlers, javascript:/data: URLs, and non-https/non-media image sources.
+ *
+ * SSR behavior:
+ * When no window exists (such as during Server-Side Rendering / SSR), safeHtml returns an empty
+ * string (""). Preview and revision review components render HTML client-side only once the DOM
+ * window environment is available.
  */
 export function safeHtml(dirty: string): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
   if (!dirty || typeof dirty !== "string" || !dirty.trim()) {
     return "";
   }
@@ -176,3 +186,4 @@ export function safeHtml(dirty: string): string {
   }
   return purify.sanitize(dirty, DOMPURIFY_CONFIG);
 }
+
