@@ -1,6 +1,6 @@
 import { requireUser } from "@/server/auth";
 import { AuthError } from "@/server/auth-error";
-import { apiError, json } from "@/server/http";
+import { apiError, assertSameOrigin, json } from "@/server/http";
 import { unpublishPost } from "@/server/post-publish";
 
 export const runtime = "nodejs";
@@ -21,6 +21,7 @@ async function readJson(request: Request): Promise<unknown> {
 /** POST /api/posts/[id]/unpublish (contract v1.2, ADR-0004). Admin only; the role is checked before any lookup. */
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
+    assertSameOrigin(request);
     const user = await requireUser();
     const { id } = await context.params;
     return json(await unpublishPost(user, id, await readJson(request)));

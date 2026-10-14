@@ -1,6 +1,6 @@
 import { requireUser } from "@/server/auth";
 import { AuthError } from "@/server/auth-error";
-import { apiError, json } from "@/server/http";
+import { apiError, assertSameOrigin, json } from "@/server/http";
 import { discardRevision } from "@/server/post-publish";
 import { getPendingRevision } from "@/server/post-revision";
 
@@ -29,6 +29,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 /** DELETE /api/posts/[id]/revision: admin only; sets the pending revision aside. Body `{ version }` (revision's). */
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
+    assertSameOrigin(request);
     const user = await requireUser();
     const { id } = await context.params;
     if (!(request.headers.get("content-type") ?? "").toLowerCase().includes("application/json")) {

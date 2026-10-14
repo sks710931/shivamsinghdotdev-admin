@@ -1,6 +1,6 @@
 import { requireUser } from "@/server/auth";
 import { AuthError } from "@/server/auth-error";
-import { apiError, json } from "@/server/http";
+import { apiError, assertSameOrigin, json } from "@/server/http";
 import { updatePost } from "@/server/post-update";
 import { getPostById } from "@/server/posts";
 
@@ -41,6 +41,7 @@ async function readJson(request: Request): Promise<unknown> {
 /** PATCH /api/posts/[id]. Drafts update in place; live posts update the single pending revision. */
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
+    assertSameOrigin(request);
     const user = await requireUser();
     const { id } = await context.params;
     if (!UUID.test(id)) {
