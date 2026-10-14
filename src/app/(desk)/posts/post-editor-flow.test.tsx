@@ -474,8 +474,15 @@ describe("PostEditor flows", () => {
       // Initial state: pending review banner is shown, status is published, published date is shown
       expect(screen.getByRole("region", { name: "Pending review" })).toBeTruthy();
       expect(screen.getAllByRole("button", { name: "Update live post" }).length).toBeGreaterThan(0);
-      expect(within(screen.getByLabelText("Post status")).getByText("Published")).toBeTruthy();
-      expect(screen.getByLabelText("Published date").textContent).toContain(formatIstDateTime(initialPost.publishedAt!));
+      const initialStatusDt = screen.getByText("Status");
+      const initialStatusDd = initialStatusDt.nextElementSibling as HTMLElement;
+      expect(within(initialStatusDd).getByText("Published")).toBeTruthy();
+
+      const initialPubDt = screen.getByText("Published date");
+      const initialPubDd = initialPubDt.nextElementSibling as HTMLElement;
+      const initialTime = within(initialPubDd).getByText(formatIstDateTime(initialPost.publishedAt!));
+      expect(initialTime.tagName).toBe("TIME");
+      expect(initialTime.getAttribute("datetime")).toBe(initialPost.publishedAt);
 
       // Trigger unpublish via the unpublish button
       const unpublishButtons = screen.getAllByRole("button", { name: "Unpublish" });
@@ -493,20 +500,43 @@ describe("PostEditor flows", () => {
         expect(screen.queryByRole("region", { name: "Pending review" })).toBeNull();
       });
 
-      // 1. The status badge shows draft
-      expect(within(screen.getByLabelText("Post status")).getByText("Draft")).toBeTruthy();
-      expect(within(screen.getByLabelText("Post status")).queryByText("Published")).toBeNull();
-      expect(within(screen.getByLabelText("Sidebar post status")).getByText("Draft")).toBeTruthy();
-      expect(screen.getAllByText("Draft").length).toBeGreaterThanOrEqual(2);
+      // 1. Status dd shows Draft
+      const statusDt = screen.getByText("Status");
+      const statusDd = statusDt.nextElementSibling as HTMLElement;
+      expect(within(statusDd).getByText("Draft")).toBeTruthy();
+      expect(within(statusDd).queryByText("Published")).toBeNull();
 
-      // 2. The published date is still shown
-      expect(screen.getByLabelText("Published date").textContent).toContain(formatIstDateTime(initialPost.publishedAt!));
-      expect(screen.getByText(formatIstDateTime(initialPost.publishedAt!))).toBeTruthy();
+      // 2. Published date dd still shows the formatted date in a <time> element
+      const pubDt = screen.getByText("Published date");
+      const pubDd = pubDt.nextElementSibling as HTMLElement;
+      const time = within(pubDd).getByText(formatIstDateTime(initialPost.publishedAt!));
+      expect(time.tagName).toBe("TIME");
+      expect(time.getAttribute("datetime")).toBe(initialPost.publishedAt);
 
-      // 3. The pending-revision banner is gone
+      // 3. Pending-revision banner gone
       expect(screen.queryByRole("region", { name: "Pending review" })).toBeNull();
       expect(screen.queryByText("Pending review")).toBeNull();
       expect(screen.queryAllByRole("button", { name: "Update live post" })).toHaveLength(0);
+    });
+
+    it("renders 'Not published' for a never-published post", () => {
+      render(
+        <PostEditor
+          mode="edit"
+          role="admin"
+          userId="user-1"
+          initialPost={samplePost}
+        />,
+      );
+
+      const statusDt = screen.getByText("Status");
+      const statusDd = statusDt.nextElementSibling as HTMLElement;
+      expect(within(statusDd).getByText("Draft")).toBeTruthy();
+
+      const pubDt = screen.getByText("Published date");
+      const pubDd = pubDt.nextElementSibling as HTMLElement;
+      expect(within(pubDd).getByText("Not published")).toBeTruthy();
+      expect(pubDd.querySelector("time")).toBeNull();
     });
   });
 });
