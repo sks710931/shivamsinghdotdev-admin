@@ -81,6 +81,24 @@ describe("apiErrorFromResponse", () => {
     expect(error.error).toBe("Nope.");
   });
 
+  it("maps post_saved_version_failed on 500 with top-level id and slug", () => {
+    const error = apiErrorFromResponse(
+      { status: 500 },
+      {
+        error: "Draft was saved, but its version could not be retrieved.",
+        code: "post_saved_version_failed",
+        id: "post-uuid-43",
+        slug: "post-slug-43",
+      },
+    );
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.status).toBe(500);
+    expect(error.code).toBe("post_saved_version_failed");
+    expect(error.id).toBe("post-uuid-43");
+    expect(error.slug).toBe("post-slug-43");
+    expect(error.error).toBe("Draft was saved, but its version could not be retrieved.");
+  });
+
   it("uses a default message when the body is empty", () => {
     const error = apiErrorFromResponse({ status: 500 }, null);
     expect(error.code).toBe("unknown");

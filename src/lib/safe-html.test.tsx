@@ -1,7 +1,7 @@
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
-import { PostEditor } from "@/app/(desk)/posts/post-editor";
+import { PostEditor, previewHtml } from "@/app/(desk)/posts/post-editor";
 import { RevisionReview } from "@/app/(desk)/posts/revision-review";
 import type { PostDetail } from "@/lib/posts-client";
 import { safeHtml } from "@/lib/safe-html";
@@ -174,8 +174,12 @@ describe("safeHtml client helper", () => {
     expect(safeHtml('<img src="http://example.com/insecure.png" alt="Insecure image">')).toBe("");
     expect(safeHtml('<img src="HTTP://EXAMPLE.COM/INSECURE.PNG" alt="Uppercase HTTP">')).toBe("");
 
-    // Non-/media/ relative img sources must be rejected
-    expect(safeHtml('<img src="/images/pic.png" alt="Non-media relative">')).toBe("");
+    // Non-/media/ relative img sources render a visible accessible placeholder (issue #30)
+    const relPlaceholder = safeHtml('<img src="/images/pic.png" alt="Non-media relative">');
+    expect(relPlaceholder).toContain('role="img"');
+    expect(relPlaceholder).toContain('aria-label="Non-media relative"');
+    expect(relPlaceholder).toContain('class="image-placeholder"');
+    expect(relPlaceholder).toContain('[Image: Non-media relative]');
 
     // HTTPS img sources must be preserved
     const secureImg = safeHtml('<img src="https://example.com/secure.png" alt="Secure image">');
@@ -197,21 +201,77 @@ describe("safeHtml client helper", () => {
     expect(linkAndImg).not.toContain("<img");
   });
 
-  it("returns empty string during SSR when no window exists", () => {
-    const originalWindow = globalThis.window;
-    try {
-      // @ts-expect-error Simulating SSR environment where window is undefined
-      delete globalThis.window;
-      expect(typeof window).toBe("undefined");
-      expect(safeHtml("<p>Hello SSR</p>")).toBe("");
-      expect(safeHtml('<img src="https://example.com/photo.png">')).toBe("");
-      expect(safeHtml('<a href="https://example.com">Link</a>')).toBe("");
-    } finally {
-      globalThis.window = originalWindow;
-    }
+  describe("issue #30: visible accessible placeholder for relative img src", () => {
+    it("renders a visible accessible placeholder for relative img src starting with / (not /media/)", () => {
+      const output = safeHtml('<img src="/images/diagram.png" alt="Architecture Diagram">');
+      expect(output).toContain('role="img"');
+      expect(output).toContain('aria-label="Architecture Diagram"');
+      expect(output).toContain('class="image-placeholder"');
+      expect(output).toContain('[Image: Architecture Diagram]');
+      expect(output).not.toContain("<img");
+    });
 
-    // Verify normal client behavior resumes once window is restored
-    expect(safeHtml("<p>Hello Client</p>")).toBe("<p>Hello Client</p>");
+    it("renders a visible accessible placeholder for relative img src with bare path", () => {
+      const output = safeHtml('<img src="flowchart.png" alt="Flowchart">');
+      expect(output).toContain('role="img"');
+      expect(output).toContain('aria-label="Flowchart"');
+      expect(output).toContain('class="image-placeholder"');
+      expect(output).toContain('[Image: Flowchart]');
+      expect(output).not.toContain("<img");
+    });
+
+    it("falls back to the relative src when alt is missing or empty", () => {
+      const output = safeHtml('<img src="/assets/photo.jpg">');
+      expect(output).toContain('role="img"');
+      expect(output).toContain('aria-label="/assets/photo.jpg"');
+      expect(output).toContain('[Image: /assets/photo.jpg]');
+
+      const emptyAlt = safeHtml('<img src="./local.png" alt="">');
+      expect(emptyAlt).toContain('role="img"');
+      expect(emptyAlt).toContain('aria-label="./local.png"');
+      expect(emptyAlt).toContain('[Image: ./local.png]');
+    });
+
+    it("still removes insecure http and javascript/data image sources completely", () => {
+      expect(safeHtml('<img src="http://example.com/bad.png" alt="Insecure">')).toBe("");
+      expect(safeHtml('<img src="javascript:alert(1)" alt="JS">')).toBe("");
+      expect(safeHtml('<img src="data:image/svg+xml;base64,123" alt="Data">')).toBe("");
+    });
+  });
+
+  describe("issue #31: safeHtml returns '' during SSR and preview renders client-only", () => {
+    it("safeHtml returns '' during SSR when window is undefined", () => {
+      const originalWindow = globalThis.window;
+      try {
+        // @ts-expect-error Simulating SSR environment where window is undefined
+        delete globalThis.window;
+        expect(typeof window).toBe("undefined");
+        expect(safeHtml("<p>Hello SSR</p>")).toBe("");
+        expect(safeHtml('<img src="https://example.com/photo.png">')).toBe("");
+        expect(safeHtml('<a href="https://example.com">Link</a>')).toBe("");
+      } finally {
+        globalThis.window = originalWindow;
+      }
+
+      // Verify normal client behavior resumes once window is restored
+      expect(safeHtml("<p>Hello Client</p>")).toBe("<p>Hello Client</p>");
+    });
+
+    it("previewHtml returns '' during SSR and renders client-only once window is defined", () => {
+      const originalWindow = globalThis.window;
+      try {
+        // @ts-expect-error Simulating SSR environment
+        delete globalThis.window;
+        expect(typeof window).toBe("undefined");
+        expect(previewHtml("<p>SSR preview content</p>")).toBe("");
+        expect(previewHtml('<img src="/images/pic.png" alt="Test">')).toBe("");
+      } finally {
+        globalThis.window = originalWindow;
+      }
+
+      const clientPreview = previewHtml("<p>Client preview content</p>");
+      expect(clientPreview).toBe("<p>Client preview content</p>");
+    });
   });
 });
 
@@ -330,6 +390,7 @@ describe("PostEditor component rendering with XSS payloads", () => {
         <PostEditor
           mode="edit"
           role="admin"
+          userId="author-1"
           initialPost={{
             ...samplePost,
             bodyHtml: payload,
@@ -346,4 +407,48 @@ describe("PostEditor component rendering with XSS payloads", () => {
       expect(container.querySelectorAll("iframe").length).toBe(0);
     });
   }
+
+  it("sanitizes restored-from-local-storage HTML shown in preview through safeHtml", () => {
+    localStorage.clear();
+    const maliciousHtml = '<p>Restored body</p><script>alert("xss")</script><img src="x" onerror="alert(1)" /><a href="javascript:alert(2)">link</a>';
+    localStorage.setItem(
+      `pixel:draft:author-1:${samplePost.id}`,
+      JSON.stringify({
+        userId: "author-1",
+        postId: samplePost.id,
+        title: "Restored Title",
+        body: maliciousHtml,
+        savedAt: "2026-10-14T10:00:00.000Z", // newer than samplePost.updatedAt (09:30:00)
+        baseVersion: samplePost.version,
+      }),
+    );
+
+    const { container } = render(
+      <PostEditor
+        mode="edit"
+        role="admin"
+        userId="author-1"
+        initialPost={samplePost}
+      />,
+    );
+
+    // Restore banner is shown because snapshot is newer
+    const restoreBtn = screen.getByRole("button", { name: "Restore" });
+    fireEvent.click(restoreBtn);
+
+    // Click preview button to open dialog
+    const previewBtn = screen.getAllByRole("button", { name: "Preview" })[0];
+    fireEvent.click(previewBtn);
+
+    const previewBody = container.querySelector(".blog-preview-body");
+    expect(previewBody).not.toBeNull();
+    if (previewBody instanceof HTMLElement) {
+      assertNoExecutableArtifacts(previewBody);
+    }
+    expect(container.querySelectorAll("script").length).toBe(0);
+    expect(container.querySelectorAll("iframe").length).toBe(0);
+    expect(previewBody?.innerHTML).not.toContain("javascript:");
+    expect(previewBody?.innerHTML).not.toContain("onerror");
+    expect(previewBody?.innerHTML).toContain("Restored body");
+  });
 });

@@ -221,6 +221,17 @@ textarea {
   color: #9ec9e8;
 }
 
+.blog-preview-body .image-placeholder {
+  display: inline-block;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.375rem;
+  border: 1px dashed #3a4d43;
+  background: #111a17;
+  color: #89968f;
+  font-size: 0.85em;
+  font-family: var(--font-mono);
+}
+
 ::selection {
   background: var(--accent);
   color: var(--ink);

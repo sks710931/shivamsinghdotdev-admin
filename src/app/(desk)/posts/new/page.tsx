@@ -14,5 +14,5 @@ export default async function NewPostPage() {
     redirect("/login");
   }
 
-  return <PostEditor mode="create" role={user.role} />;
+  return <PostEditor mode="create" role={user.role} userId={user.id} />;
 }
