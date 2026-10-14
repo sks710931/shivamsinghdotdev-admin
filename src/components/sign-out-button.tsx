@@ -4,6 +4,8 @@ import { LogOut } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { clearAllSnapshots } from "@/lib/draft-snapshot";
+
 export function SignOutButton() {
   const router = useRouter();
   const [pending, setPending] = useState(false);
@@ -15,6 +17,7 @@ export function SignOutButton() {
 
     setPending(true);
     try {
+      clearAllSnapshots();
       await fetch("/api/auth/logout", { method: "POST" });
     } finally {
       router.refresh();

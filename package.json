@@ -9,6 +9,8 @@
     "prebuild": "node scripts/copy-tinymce.mjs",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run --exclude tests/security/authz-data.test.ts --exclude tests/security/authz-revision.test.ts --exclude tests/security/publish-workflow.test.ts",
+    "test:db": "vitest run tests/security/authz-data.test.ts tests/security/authz-revision.test.ts tests/security/publish-workflow.test.ts",
     "db:check": "node --conditions=react-server --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-db.ts",
     "db:migrate": "node --conditions=react-server --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/migrate.ts",
     "seed:local": "node --conditions=react-server --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/seed-local-users.ts",
@@ -19,6 +21,7 @@
   },
   "dependencies": {
     "@tinymce/tinymce-react": "^6.3.0",
+    "dompurify": "^3.4.17",
     "lucide-react": "^1.52.0",
     "mssql": "^12.7.3",
     "next": "16.3.8",
@@ -32,16 +35,21 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
     "@types/mssql": "^12.3.0",
     "@types/node": "^20",
     "@types/prismjs": "^1.26.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/sanitize-html": "^2.16.2",
+    "@vitejs/plugin-react": "^6.1.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.8",
+    "jsdom": "^30.1.2",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^5.0.4"
   },
   "packageManager": "pnpm@10.5.2",
   "engines": {
