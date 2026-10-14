@@ -304,3 +304,48 @@ export async function createPost(
 
   return { id, slug };
 }
+export type BlogPostDetail = {
+  id: string; title: string; slug: string; summary: string; tags: string; seoKeywords: string; seoTitle: string;
+  bodyHtml: string; status: ListPostStatus; authorId: string; authorName: string; hasPendingRevision: boolean;
+  version: string; updatedAt: string; publishedAt: string | null;
+};
+
+export async function getPostById(id: string): Promise<BlogPostDetail | null> {
+  const viewer = await getCurrentUser();
+  if (!viewer) return null;
+  const result = await query<Record<string, unknown>>(
+    `SELECT p.Id AS id, p.Title AS title, p.Slug AS slug, p.Summary AS summary, p.Tags AS tags,
+       p.SeoKeywords AS seoKeywords, p.SeoTitle AS seoTitle, p.BodyHtml AS bodyHtml, p.Status AS status,
+       p.AuthorId AS authorId, p.RowVersion AS rowVersion, p.UpdatedAt AS updatedAt, p.PublishedAt AS publishedAt,
+       COALESCE(NULLIF(LTRIM(RTRIM(u.DisplayName)), N''), u.Email, N'') AS authorName,
+       CASE WHEN ${PENDING_REVISION} THEN 1 ELSE 0 END AS hasPendingRevision
+     FROM dbo.BlogPost AS p
+     INNER JOIN dbo.AdminUser AS u ON u.Id = p.AuthorId
+     WHERE p.Id = @id`,
+    (request) => {
+      request.input("id", sql.UniqueIdentifier, id);
+    },
+  );
+  const row = result.recordset[0];
+  if (!row) return null;
+  const authorId = String(field(row, "authorId") ?? "");
+  if (viewer.role === "guest" && authorId.toLowerCase() !== String(viewer.id).toLowerCase()) return null;
+  const rv = field(row, "rowVersion");
+  return {
+    id: String(field(row, "id") ?? ""),
+    title: String(field(row, "title") ?? ""),
+    slug: String(field(row, "slug") ?? ""),
+    summary: String(field(row, "summary") ?? ""),
+    tags: String(field(row, "tags") ?? ""),
+    seoKeywords: String(field(row, "seoKeywords") ?? ""),
+    seoTitle: String(field(row, "seoTitle") ?? ""),
+    bodyHtml: String(field(row, "bodyHtml") ?? ""),
+    status: listStatus(field(row, "status")),
+    authorId,
+    authorName: String(field(row, "authorName") ?? ""),
+    hasPendingRevision: flag(field(row, "hasPendingRevision")),
+    version: Buffer.isBuffer(rv) ? rv.toString("base64") : Buffer.from(String(rv ?? "")).toString("base64"),
+    updatedAt: timestamp(field(row, "updatedAt")),
+    publishedAt: timestampOrNull(field(row, "publishedAt")),
+  };
+}
