@@ -101,6 +101,9 @@ const DEFAULT_CODES: Record<number, string> = {
   429: "rate_limited",
 };
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ROUTE_UNSAFE_CHARS_REGEX = /[^A-Za-z0-9\/_\-[\]\.:]/g;
+
 export type ApiErrorContext = {
   route?: string;
   postId?: string;
@@ -109,10 +112,11 @@ export type ApiErrorContext = {
 export function buildSafeTag(context?: ApiErrorContext): string {
   const parts: string[] = [];
   if (context?.route) {
-    parts.push(`route=${context.route}`);
+    parts.push(`route=${context.route.replace(ROUTE_UNSAFE_CHARS_REGEX, "_")}`);
   }
-  if (context?.postId) {
-    parts.push(`postId=${context.postId}`);
+  if (context?.postId !== undefined) {
+    const isUuid = typeof context.postId === "string" && UUID_REGEX.test(context.postId);
+    parts.push(`postId=${isUuid ? context.postId : "invalid"}`);
   }
   return `[${parts.join(" ") || "api"}]`;
 }
