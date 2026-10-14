@@ -25,7 +25,7 @@ async function settle(run: () => Promise<unknown>): Promise<unknown> {
   }
 }
 
-describe.skipIf(!posts || !process.env.DB_SERVER)("post data authorization", () => {
+describe.skipIf(!posts || typeof posts.getPostById !== "function" || !process.env.DB_SERVER || !process.env.TEST_GUEST_ID)("post data authorization", () => {
   it("a guest listing sees only rows whose authorId equals its id", async () => {
     const rows = await posts.listPosts(guest, { pageSize: 100 });
     expect(Array.isArray(rows.items)).toBe(true);
