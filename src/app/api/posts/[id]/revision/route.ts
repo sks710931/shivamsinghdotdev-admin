@@ -10,9 +10,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** GET /api/posts/[id]/revision. 404 when there is no pending revision or a guest asks for another author's post. */
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
+  let postId: string | undefined;
   try {
     const user = await requireUser();
     const { id } = await context.params;
+    postId = id;
     if (!UUID.test(id)) {
       return json({ error: "Revision not found.", code: "not_found" }, 404);
     }
@@ -22,16 +24,18 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     }
     return json(revision);
   } catch (error) {
-    return apiError(error);
+    return apiError(error, { route: "/api/posts/[id]/revision", postId });
   }
 }
 
 /** DELETE /api/posts/[id]/revision: admin only; sets the pending revision aside. Body `{ version }` (revision's). */
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
+  let postId: string | undefined;
   try {
     assertSameOrigin(request);
     const user = await requireUser();
     const { id } = await context.params;
+    postId = id;
     if (!(request.headers.get("content-type") ?? "").toLowerCase().includes("application/json")) {
       throw new AuthError("Expected JSON.", 415);
     }
@@ -43,6 +47,6 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     }
     return json(await discardRevision(user, id, body));
   } catch (error) {
-    return apiError(error);
+    return apiError(error, { route: "/api/posts/[id]/revision", postId });
   }
 }

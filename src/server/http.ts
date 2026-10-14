@@ -101,8 +101,24 @@ const DEFAULT_CODES: Record<number, string> = {
   429: "rate_limited",
 };
 
+export type ApiErrorContext = {
+  route?: string;
+  postId?: string;
+};
+
+export function buildSafeTag(context?: ApiErrorContext): string {
+  const parts: string[] = [];
+  if (context?.route) {
+    parts.push(`route=${context.route}`);
+  }
+  if (context?.postId) {
+    parts.push(`postId=${context.postId}`);
+  }
+  return `[${parts.join(" ") || "api"}]`;
+}
+
 /** Maps an error to the contract response shape. */
-export function apiError(error: unknown): Response {
+export function apiError(error: unknown, context?: ApiErrorContext): Response {
   if (error instanceof AuthError) {
     return json(
       {
@@ -114,6 +130,6 @@ export function apiError(error: unknown): Response {
     );
   }
 
-  console.error("API request failed", error instanceof Error ? error.name : "error");
+  console.error("API request failed", buildSafeTag(context), error instanceof Error ? error.name : "error");
   return json({ error: "Unable to complete the request.", code: "internal" }, 500);
 }

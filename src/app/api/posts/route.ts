@@ -134,7 +134,7 @@ export async function GET(request: Request) {
     });
     return json(posts);
   } catch (error) {
-    return apiError(error);
+    return apiError(error, { route: "/api/posts" });
   }
 }
 
@@ -145,6 +145,6 @@ export async function POST(request: Request) {
     const created = await createPost(user, await readPostJson(request));
     return json(created, 201);
   } catch (error) {
-    return apiError(error);
+    return apiError(error, { route: "/api/posts" });
   }
 }
