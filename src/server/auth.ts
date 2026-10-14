@@ -90,68 +90,8 @@ function sessionCookie(expires: Date) {
   };
 }
 
-async function createAuthSchema(): Promise<void> {
-  await query(`
-    IF OBJECT_ID(N'dbo.AdminUser', N'U') IS NULL
-    BEGIN
-      CREATE TABLE dbo.AdminUser (
-        Id uniqueidentifier NOT NULL CONSTRAINT PK_AdminUser PRIMARY KEY,
-        Email nvarchar(320) NOT NULL,
-        PasswordHash nvarchar(500) NOT NULL,
-        CreatedAt datetimeoffset NOT NULL CONSTRAINT DF_AdminUser_CreatedAt DEFAULT SYSUTCDATETIME(),
-        CONSTRAINT UQ_AdminUser_Email UNIQUE (Email)
-      );
-    END
-  `);
-
-  await query(`
-    IF OBJECT_ID(N'dbo.AdminSession', N'U') IS NULL
-    BEGIN
-      CREATE TABLE dbo.AdminSession (
-        Id uniqueidentifier NOT NULL CONSTRAINT PK_AdminSession PRIMARY KEY,
-        UserId uniqueidentifier NOT NULL,
-        TokenHash varchar(64) NOT NULL,
-        ExpiresAt datetimeoffset NOT NULL,
-        CreatedAt datetimeoffset NOT NULL CONSTRAINT DF_AdminSession_CreatedAt DEFAULT SYSUTCDATETIME(),
-        CONSTRAINT FK_AdminSession_User FOREIGN KEY (UserId) REFERENCES dbo.AdminUser (Id) ON DELETE CASCADE,
-        CONSTRAINT UQ_AdminSession_TokenHash UNIQUE (TokenHash)
-      );
-      CREATE INDEX IX_AdminSession_ExpiresAt ON dbo.AdminSession (ExpiresAt);
-    END
-  `);
-
-  await query(`
-    IF COL_LENGTH(N'dbo.AdminUser', N'Role') IS NULL
-      ALTER TABLE dbo.AdminUser ADD Role varchar(20) NOT NULL CONSTRAINT DF_AdminUser_Role DEFAULT 'admin';
-  `);
-  await query(`
-    IF COL_LENGTH(N'dbo.AdminUser', N'Disabled') IS NULL
-      ALTER TABLE dbo.AdminUser ADD Disabled bit NOT NULL CONSTRAINT DF_AdminUser_Disabled DEFAULT 0;
-  `);
-  await query(`
-    IF COL_LENGTH(N'dbo.AdminUser', N'DisplayName') IS NULL
-      ALTER TABLE dbo.AdminUser ADD DisplayName nvarchar(120) NULL;
-  `);
-  await query(`
-    IF OBJECT_ID(N'dbo.UserInvite', N'U') IS NULL
-    BEGIN
-      CREATE TABLE dbo.UserInvite (
-        Id uniqueidentifier NOT NULL CONSTRAINT PK_UserInvite PRIMARY KEY,
-        Email nvarchar(320) NOT NULL,
-        DisplayName nvarchar(120) NULL,
-        Role varchar(20) NOT NULL,
-        TokenHash varchar(64) NOT NULL,
-        ExpiresAt datetimeoffset NOT NULL,
-        AcceptedAt datetimeoffset NULL,
-        RevokedAt datetimeoffset NULL,
-        CreatedAt datetimeoffset NOT NULL CONSTRAINT DF_UserInvite_CreatedAt DEFAULT SYSUTCDATETIME(),
-        InvitedBy uniqueidentifier NULL,
-        CONSTRAINT UQ_UserInvite_TokenHash UNIQUE (TokenHash),
-        CONSTRAINT FK_UserInvite_InvitedBy FOREIGN KEY (InvitedBy) REFERENCES dbo.AdminUser (Id) ON DELETE SET NULL
-      );
-      CREATE INDEX IX_UserInvite_Email ON dbo.UserInvite (Email);
-    END
-  `);
+/** Schema comes from db/migrations. This only bootstraps the first admin from env (needs INSERT, not DDL). */
+async function bootstrapFirstAdmin(): Promise<void> {
 
   const existing = await query<Record<string, unknown>>(
     "SELECT COUNT(*) AS total FROM dbo.AdminUser",
@@ -183,7 +123,7 @@ async function createAuthSchema(): Promise<void> {
 }
 
 export function ensureAuthSchema(): Promise<void> {
-  schemaReady ??= createAuthSchema().catch((error: unknown) => {
+  schemaReady ??= bootstrapFirstAdmin().catch((error: unknown) => {
     schemaReady = undefined;
     throw error;
   });

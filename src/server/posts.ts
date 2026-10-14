@@ -46,64 +46,6 @@ function text(value: unknown, label: string, max: number, required: boolean): st
   return trimmed;
 }
 
-export async function ensurePostSchema(): Promise<void> {
-  await query(`
-    IF OBJECT_ID(N'dbo.BlogPost', N'U') IS NULL
-    BEGIN
-      CREATE TABLE dbo.BlogPost (
-        Id uniqueidentifier NOT NULL CONSTRAINT PK_BlogPost PRIMARY KEY,
-        Title nvarchar(200) NOT NULL,
-        Slug varchar(180) NOT NULL,
-        Summary nvarchar(500) NOT NULL CONSTRAINT DF_BlogPost_Summary DEFAULT N'',
-        Tags nvarchar(500) NOT NULL CONSTRAINT DF_BlogPost_Tags DEFAULT N'',
-        SeoKeywords nvarchar(500) NOT NULL CONSTRAINT DF_BlogPost_SeoKeywords DEFAULT N'',
-        SeoTitle nvarchar(200) NOT NULL CONSTRAINT DF_BlogPost_SeoTitle DEFAULT N'',
-        BodyHtml nvarchar(max) NOT NULL,
-        Status varchar(20) NOT NULL CONSTRAINT DF_BlogPost_Status DEFAULT 'draft',
-        AuthorId uniqueidentifier NOT NULL,
-        CreatedAt datetimeoffset NOT NULL CONSTRAINT DF_BlogPost_CreatedAt DEFAULT SYSUTCDATETIME(),
-        UpdatedAt datetimeoffset NOT NULL CONSTRAINT DF_BlogPost_UpdatedAt DEFAULT SYSUTCDATETIME(),
-        PublishedAt datetimeoffset NULL,
-        CONSTRAINT UQ_BlogPost_Slug UNIQUE (Slug),
-        CONSTRAINT FK_BlogPost_Author FOREIGN KEY (AuthorId) REFERENCES dbo.AdminUser (Id)
-      );
-      CREATE INDEX IX_BlogPost_UpdatedAt ON dbo.BlogPost (UpdatedAt DESC);
-    END
-  `);
-
-  await query(`
-    IF COL_LENGTH(N'dbo.BlogPost', N'PublishedAt') IS NULL
-      ALTER TABLE dbo.BlogPost ADD PublishedAt datetimeoffset NULL;
-  `);
-
-  await query(`
-    IF OBJECT_ID(N'dbo.PostRevision', N'U') IS NULL
-    BEGIN
-      CREATE TABLE dbo.PostRevision (
-        Id uniqueidentifier NOT NULL CONSTRAINT PK_PostRevision PRIMARY KEY,
-        PostId uniqueidentifier NOT NULL,
-        AuthorId uniqueidentifier NOT NULL,
-        Title nvarchar(200) NOT NULL,
-        Slug varchar(180) NOT NULL,
-        Summary nvarchar(500) NOT NULL CONSTRAINT DF_PostRevision_Summary DEFAULT N'',
-        Tags nvarchar(500) NOT NULL CONSTRAINT DF_PostRevision_Tags DEFAULT N'',
-        SeoTitle nvarchar(200) NOT NULL CONSTRAINT DF_PostRevision_SeoTitle DEFAULT N'',
-        SeoKeywords nvarchar(500) NOT NULL CONSTRAINT DF_PostRevision_SeoKeywords DEFAULT N'',
-        BodyHtml nvarchar(max) NOT NULL,
-        State varchar(20) NOT NULL,
-        BaseVersion bigint NOT NULL CONSTRAINT DF_PostRevision_BaseVersion DEFAULT 0,
-        RowVersion bigint NOT NULL CONSTRAINT DF_PostRevision_RowVersion DEFAULT 0,
-        CreatedAt datetimeoffset NOT NULL CONSTRAINT DF_PostRevision_CreatedAt DEFAULT SYSUTCDATETIME(),
-        UpdatedAt datetimeoffset NOT NULL CONSTRAINT DF_PostRevision_UpdatedAt DEFAULT SYSUTCDATETIME(),
-        CONSTRAINT FK_PostRevision_Post FOREIGN KEY (PostId) REFERENCES dbo.BlogPost (Id),
-        CONSTRAINT FK_PostRevision_Author FOREIGN KEY (AuthorId) REFERENCES dbo.AdminUser (Id),
-        CONSTRAINT CK_PostRevision_State CHECK (State IN ('pending', 'published', 'discarded'))
-      );
-      CREATE UNIQUE INDEX UX_PostRevision_OnePending ON dbo.PostRevision (PostId) WHERE State = 'pending';
-    END
-  `);
-}
-
 export type ListPostStatus = PostStatus | "archived";
 
 export type ListPostsOptions = {
@@ -161,7 +103,6 @@ export async function listPosts(
   actor: PostActor,
   options?: ListPostsOptions,
 ): Promise<BlogPostListItem[] | { items: BlogPostListItem[]; total: number }> {
-  await ensurePostSchema();
 
   const paginate = options !== undefined;
   const page = options?.page && Number.isInteger(options.page) && options.page > 0 ? options.page : 1;
@@ -279,7 +220,6 @@ export async function createPost(
   const status: PostStatus = actor.role === "admin" && body.status === "published" ? "published" : "draft";
   const authorId = actor.id;
 
-  await ensurePostSchema();
   const id = randomUUID();
   try {
     await query(

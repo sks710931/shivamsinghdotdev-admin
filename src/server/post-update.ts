@@ -3,6 +3,7 @@ import "server-only";
 import { AuthError } from "@/server/auth-error";
 import { query, sql } from "@/server/db";
 import { getPostById, type BlogPostDetail, type PostActor } from "@/server/posts";
+import { getPendingRevision, type PendingRevision } from "@/server/post-revision";
 import { sanitizeHtml } from "@/server/sanitize";
 
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -90,7 +91,7 @@ function isDuplicateKey(error: unknown): boolean {
  * PATCH /api/posts/[id]. Draft posts are updated in place with a RowVersion check.
  * Published posts are handled by the pending-revision path (next commit).
  */
-export async function updatePost(actor: PostActor, id: string, input: unknown): Promise<BlogPostDetail> {
+export async function updatePost(actor: PostActor, id: string, input: unknown): Promise<BlogPostDetail | PendingRevision> {
   const patch = parsePostPatch(input);
   if (patch.force && actor.role !== "admin") {
     throw new AuthError("Only an admin can force an update.", 403, "forbidden");
@@ -100,7 +101,7 @@ export async function updatePost(actor: PostActor, id: string, input: unknown): 
   if (!current) throw new AuthError("Post not found.", 404, "not_found");
   if (current.status === "archived") throw new AuthError("This post is archived.", 409, "archived");
   if (current.status === "published") {
-    throw new AuthError("Editing a published post is not available yet.", 501, "not_implemented");
+    return updatePublishedPost(actor, current, patch);
   }
   if (current.version !== patch.version.toString("base64")) {
     throw new AuthError("This post changed since you loaded it.", 409, "stale_version");
@@ -135,4 +136,99 @@ export async function updatePost(actor: PostActor, id: string, input: unknown): 
   const updated = await getPostById(actor, id);
   if (!updated) throw new AuthError("Post not found.", 404, "not_found");
   return updated;
+}
+
+type Snapshot = Record<EditableField, string>;
+
+function snapshotOf(source: BlogPostDetail | PendingRevision): Snapshot {
+  return {
+    title: source.title, slug: source.slug, summary: source.summary, tags: source.tags,
+    seoTitle: source.seoTitle, seoKeywords: source.seoKeywords, bodyHtml: source.bodyHtml,
+  };
+}
+
+/**
+ * Edits to a live post never touch BlogPost (ADR-0002/0003). They create or update, in place,
+ * the single pending PostRevision. `version` is the revision's RowVersion when one exists.
+ */
+async function updatePublishedPost(
+  actor: PostActor,
+  live: BlogPostDetail,
+  patch: PostPatch,
+): Promise<BlogPostDetail | PendingRevision> {
+  const pending = await getPendingRevision(actor, live.id);
+  const expected = pending ? pending.version : live.version;
+  if (!patch.force && expected !== patch.version.toString("base64")) {
+    throw new AuthError("This post changed since you loaded it.", 409, "stale_version");
+  }
+
+  const base = snapshotOf(pending ?? live);
+  const changed = (Object.keys(patch.changes) as EditableField[]).filter((key) => patch.changes[key] !== base[key]);
+  if (changed.length === 0) return pending ?? live;
+  const next = { ...base, ...patch.changes } as Snapshot;
+
+  if (changed.includes("slug")) {
+    const taken = await query(
+      `SELECT 1 AS hit FROM dbo.BlogPost WHERE Slug = @slug AND Id <> @id
+       UNION ALL
+       SELECT 1 FROM dbo.PostRevision WHERE Slug = @slug AND PostId <> @id AND State = 'pending'`,
+      (request) => {
+        request.input("slug", sql.VarChar(180), next.slug);
+        request.input("id", sql.UniqueIdentifier, live.id);
+      },
+    );
+    if (taken.recordset.length > 0) throw new AuthError("That URL slug is already used.", 409, "slug_taken");
+  }
+
+  const bindFields = (request: { input: (name: string, type: sql.ISqlType, value: unknown) => unknown }) => {
+    for (const key of Object.keys(FIELDS) as EditableField[]) {
+      request.input(key, FIELDS[key].type() as sql.ISqlType, next[key]);
+    }
+  };
+
+  let rows = 0;
+  try {
+    if (pending) {
+      const result = await query(
+        `UPDATE dbo.PostRevision
+         SET Title = @title, Slug = @slug, Summary = @summary, Tags = @tags, SeoTitle = @seoTitle,
+             SeoKeywords = @seoKeywords, BodyHtml = @bodyHtml, AuthorId = @actorId, UpdatedAt = SYSUTCDATETIME()
+         WHERE Id = @revisionId AND State = 'pending'${patch.force ? "" : " AND RowVersion = @version"}`,
+        (request) => {
+          request.input("revisionId", sql.UniqueIdentifier, pending.id);
+          request.input("actorId", sql.UniqueIdentifier, actor.id);
+          if (!patch.force) request.input("version", sql.VarBinary(8), patch.version);
+          bindFields(request);
+        },
+      );
+      rows = result.rowsAffected[0] ?? 0;
+    } else {
+      const result = await query(
+        `INSERT INTO dbo.PostRevision
+           (Id, PostId, AuthorId, Title, Slug, Summary, Tags, SeoTitle, SeoKeywords, BodyHtml, State, BaseVersion)
+         SELECT NEWID(), p.Id, @actorId, @title, @slug, @summary, @tags, @seoTitle, @seoKeywords, @bodyHtml,
+           'pending', p.RowVersion
+         FROM dbo.BlogPost AS p
+         WHERE p.Id = @id AND p.Status = 'published'${patch.force ? "" : " AND p.RowVersion = @version"}`,
+        (request) => {
+          request.input("id", sql.UniqueIdentifier, live.id);
+          request.input("actorId", sql.UniqueIdentifier, actor.id);
+          if (!patch.force) request.input("version", sql.VarBinary(8), patch.version);
+          bindFields(request);
+        },
+      );
+      rows = result.rowsAffected[0] ?? 0;
+    }
+  } catch (error) {
+    // IX_PostRevision_PendingPost: another request created the pending revision first.
+    if (isDuplicateKey(error) && String((error as { message?: unknown }).message ?? "").includes("IX_PostRevision_PendingPost")) {
+      throw new AuthError("This post changed since you loaded it.", 409, "stale_version");
+    }
+    throw error;
+  }
+  if (rows === 0) throw new AuthError("This post changed since you loaded it.", 409, "stale_version");
+
+  const saved = await getPendingRevision(actor, live.id);
+  if (!saved) throw new AuthError("Post not found.", 404, "not_found");
+  return saved;
 }
