@@ -48,7 +48,7 @@ jobs:
       DB_TRUST_SERVER_CERTIFICATE: "true"
     services:
       mssql:
-        image: mcr.microsoft.com/mssql/server:2022-latest
+        image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
         env:
           ACCEPT_EULA: Y
           MSSQL_SA_PASSWORD: "Ci_Throwaway_Pa55!"

@@ -12,7 +12,7 @@ CONTAINER=blogdesk-mssql
 for v in DATABASE_URL DB_SERVER DB_DATABASE DB_USER DB_PASSWORD; do
   [ -n "${!v:-}" ] && { echo "Unset $v in your shell first; it would override .env.local."; exit 1; }
 done
-IMAGE=mcr.microsoft.com/mssql/server:2022-latest
+IMAGE=mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
 SECRET_FILE="${HOME}/.blogdesk/sa_password"
 DOCKER="docker"; docker info >/dev/null 2>&1 || DOCKER="sudo --preserve-env=SQLCMDPASSWORD,MSSQL_SA_PASSWORD docker"
 
@@ -34,8 +34,9 @@ if ! $DOCKER ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
   MSSQL_SA_PASSWORD="$SA_PASSWORD" $DOCKER run -d --name "$CONTAINER" --restart unless-stopped \
     -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD -e MSSQL_MEMORY_LIMIT_MB=2048 \
     -p 127.0.0.1:1433:1433 -v blogdesk-mssql-data:/var/opt/mssql "$IMAGE" >/dev/null
-elif [ "$($DOCKER inspect -f '{{.State.Running}}' "$CONTAINER")" != "true" ]; then
-  $DOCKER start "$CONTAINER" >/dev/null
+else
+  [ "$($DOCKER inspect -f '{{.Config.Image}}' "$CONTAINER")" = "$IMAGE" ] || echo "Warning: $CONTAINER runs a different image and is not recreated automatically."
+  [ "$($DOCKER inspect -f '{{.State.Running}}' "$CONTAINER")" = "true" ] || $DOCKER start "$CONTAINER" >/dev/null
 fi
 
 # Password goes through the environment, never argv, so it does not show in `ps`.
