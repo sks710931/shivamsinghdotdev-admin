@@ -200,7 +200,7 @@ export async function listPosts(
 export async function createPost(
   actor: PostActor,
   input: unknown,
-): Promise<{ id: string; slug: string }> {
+): Promise<{ id: string; slug: string; version: string }> {
   if (!input || typeof input !== "object") {
     throw new AuthError("Expected a post.", 400);
   }
@@ -216,17 +216,17 @@ export async function createPost(
   const seoTitle = text(body.seoTitle, "SEO title", 200, false);
   const html = sanitizeHtml(text(body.bodyHtml, "Body", 200_000, true));
   if (html.trim().length === 0) throw new AuthError("Body is required.", 400, "validation");
-  // Guests can never publish on create (Sentinel P1).
-  const status: PostStatus = actor.role === "admin" && body.status === "published" ? "published" : "draft";
   const authorId = actor.id;
 
   const id = randomUUID();
+  let result;
   try {
-    await query(
+    result = await query<Record<string, unknown>>(
       `INSERT INTO dbo.BlogPost
         (Id, Title, Slug, Summary, Tags, SeoKeywords, SeoTitle, BodyHtml, Status, AuthorId)
+       OUTPUT INSERTED.RowVersion AS rowVersion
        VALUES
-        (@id, @title, @slug, @summary, @tags, @seoKeywords, @seoTitle, @bodyHtml, @status, @authorId)`,
+        (@id, @title, @slug, @summary, @tags, @seoKeywords, @seoTitle, @bodyHtml, 'draft', @authorId)`,
       (request) => {
         request.input("id", sql.UniqueIdentifier, id);
         request.input("title", sql.NVarChar(200), title);
@@ -236,7 +236,6 @@ export async function createPost(
         request.input("seoKeywords", sql.NVarChar(500), seoKeywords);
         request.input("seoTitle", sql.NVarChar(200), seoTitle);
         request.input("bodyHtml", sql.NVarChar(sql.MAX), html);
-        request.input("status", sql.VarChar(20), status);
         request.input("authorId", sql.UniqueIdentifier, authorId);
       },
     );
@@ -248,7 +247,11 @@ export async function createPost(
     throw error;
   }
 
-  return { id, slug };
+  const row = result.recordset[0];
+  const rv = row ? field(row, "rowVersion") : undefined;
+  const version = Buffer.isBuffer(rv) ? rv.toString("base64") : Buffer.from(String(rv ?? "")).toString("base64");
+
+  return { id, slug, version };
 }
 export type BlogPostDetail = {
   id: string; title: string; slug: string; summary: string; tags: string; seoKeywords: string; seoTitle: string;

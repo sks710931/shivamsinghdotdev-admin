@@ -101,11 +101,15 @@ const DEFAULT_CODES: Record<number, string> = {
   429: "rate_limited",
 };
 
-/** Maps an error to the contract v1.1 `{ error, code }` response shape. */
+/** Maps an error to the contract response shape. */
 export function apiError(error: unknown): Response {
   if (error instanceof AuthError) {
     return json(
-      { error: error.message, code: error.code ?? DEFAULT_CODES[error.status] ?? "error" },
+      {
+        ...error.extra,
+        error: error.message,
+        code: error.code ?? DEFAULT_CODES[error.status] ?? "error",
+      },
       error.status,
     );
   }
