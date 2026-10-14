@@ -1,8 +1,10 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const GUEST_EMAIL = "guest@localhost.test";
+const OTHER_AUTHOR_EMAIL = "other-author@localhost.test";
+const OTHER_POST_SLUG = "local-other-author-post";
 
 function loadEnvFile(filename: string, override: boolean) {
   let text: string;
@@ -82,6 +84,34 @@ function ensureGuestPassword(): string {
   process.env.LOCAL_GUEST_PASSWORD = generated;
   console.log("Wrote LOCAL_GUEST_PASSWORD to .env.local.");
   return generated;
+}
+
+function writeTestOtherPostId(postId: string): void {
+  const path = resolve(process.cwd(), ".env.local");
+  const assignment = `TEST_OTHER_POST_ID=${postId}`;
+  let text = "";
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  if (/^TEST_OTHER_POST_ID=.*$/m.test(text)) {
+    const next = text.replace(/^TEST_OTHER_POST_ID=.*$/gm, assignment);
+    writeFileSync(path, next.endsWith("\n") ? next : `${next}\n`, "utf8");
+  } else {
+    let prefix = "";
+    if (text.length > 0 && !text.endsWith("\n")) {
+      prefix = "\n";
+    }
+    appendFileSync(path, `${prefix}${assignment}\n`, "utf8");
+  }
+
+  process.env.TEST_OTHER_POST_ID = postId;
+  console.log("Wrote TEST_OTHER_POST_ID to .env.local.");
 }
 
 loadEnvFile(".env", false);
@@ -177,6 +207,59 @@ try {
 
     console.log(`Upserted admin user ${adminEmail}.`);
   }
+
+  const otherAuthorPasswordHash = await hashPassword(randomBytes(24).toString("base64url"));
+  const existingOtherAuthor = await pool
+    .request()
+    .input("email", sql.NVarChar(320), OTHER_AUTHOR_EMAIL)
+    .query("SELECT Id FROM dbo.AdminUser WHERE Email = @email");
+
+  if (existingOtherAuthor.recordset.length > 0) {
+    await pool
+      .request()
+      .input("email", sql.NVarChar(320), OTHER_AUTHOR_EMAIL)
+      .input("passwordHash", sql.NVarChar(500), otherAuthorPasswordHash)
+      .query(
+        `UPDATE dbo.AdminUser
+         SET PasswordHash = @passwordHash, Role = 'guest', Disabled = 0
+         WHERE Email = @email`,
+      );
+  } else {
+    await pool
+      .request()
+      .input("id", sql.UniqueIdentifier, randomUUID())
+      .input("email", sql.NVarChar(320), OTHER_AUTHOR_EMAIL)
+      .input("passwordHash", sql.NVarChar(500), otherAuthorPasswordHash)
+      .query(
+        `INSERT INTO dbo.AdminUser (Id, Email, PasswordHash, Role, Disabled)
+         VALUES (@id, @email, @passwordHash, 'guest', 0)`,
+      );
+  }
+
+  const otherAuthor = await pool
+    .request()
+    .input("email", sql.NVarChar(320), OTHER_AUTHOR_EMAIL)
+    .query("SELECT Id FROM dbo.AdminUser WHERE Email = @email");
+  const authorId = otherAuthor.recordset[0].Id;
+
+  await pool
+    .request()
+    .input("slug", sql.NVarChar(200), OTHER_POST_SLUG)
+    .input("authorId", sql.UniqueIdentifier, authorId)
+    .query(
+      `IF NOT EXISTS (SELECT 1 FROM dbo.BlogPost WHERE Slug=@slug)
+       INSERT dbo.BlogPost (Id, Title, Slug, BodyHtml, Status, AuthorId)
+       VALUES (NEWID(), N'Other author draft', @slug, N'<p>Seeded for authz tests.</p>', 'draft', @authorId)`,
+    );
+
+  const otherPost = await pool
+    .request()
+    .input("slug", sql.NVarChar(200), OTHER_POST_SLUG)
+    .query("SELECT Id FROM dbo.BlogPost WHERE Slug=@slug");
+  const id = otherPost.recordset[0].Id;
+
+  console.log("TEST_OTHER_POST_ID=" + id);
+  writeTestOtherPostId(String(id));
 } catch (error: unknown) {
   console.error(describeError(error));
   process.exitCode = 1;
