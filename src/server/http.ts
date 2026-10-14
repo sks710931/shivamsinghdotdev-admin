@@ -8,8 +8,8 @@ function blocked(): never {
 
 /**
  * Same-origin check for state-changing requests.
- * With APP_ORIGIN set (required in production), `Origin` must equal it exactly; proxy headers are ignored.
- * Without it (local dev only), `Origin` must match the `Host` header. X-Forwarded-Host is never trusted.
+ * `Origin` must equal APP_ORIGIN, or the APP_URL origin when APP_ORIGIN is unset. Production with neither fails closed.
+ * Local dev with neither: `Origin` must be http://<Host>. X-Forwarded-Host is never trusted.
  */
 export function assertSameOrigin(request: Request): void {
   const origin = request.headers.get("origin");
@@ -22,7 +22,8 @@ export function assertSameOrigin(request: Request): void {
     blocked();
   }
 
-  const configured = process.env.APP_ORIGIN?.trim();
+  // APP_ORIGIN wins; otherwise APP_URL's origin (set in CI, dev-local.sh and on Azure).
+  const configured = process.env.APP_ORIGIN?.trim() || process.env.APP_URL?.trim();
   if (configured) {
     let expected: string;
     try {
@@ -35,11 +36,12 @@ export function assertSameOrigin(request: Request): void {
   }
 
   if (process.env.NODE_ENV === "production") {
-    console.error("APP_ORIGIN is not set; blocking state-changing requests.");
+    console.error("Neither APP_ORIGIN nor APP_URL is set; blocking state-changing requests.");
     blocked();
   }
+  // Local dev only: plain http on the Host header (scheme is checked too).
   const host = request.headers.get("host");
-  if (!host || parsed.host !== host) blocked();
+  if (!host || parsed.origin !== `http://${host}`) blocked();
 }
 
 export function clientAddress(request: Request): string {
@@ -75,7 +77,7 @@ export function json(body: unknown, status = 200): Response {
 
 export function authFailure(error: unknown): Response {
   if (error instanceof AuthError) {
-    return json({ error: error.message }, error.status);
+    return json({ error: error.message, code: error.code ?? DEFAULT_CODES[error.status] ?? "error" }, error.status);
   }
 
   console.error("Auth request failed", error instanceof Error ? error.name : "error");
