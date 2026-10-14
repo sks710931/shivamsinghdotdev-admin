@@ -54,4 +54,27 @@ describe.skipIf(!posts || !process.env.DB_SERVER)("post data authorization", () 
       expect(readError(outcome).status).toBe(403);
     },
   );
+
+  it.skipIf(typeof posts?.createPost !== "function")(
+    "createPost for a guest with status published returns status draft",
+    async () => {
+      const post = await posts.createPost(guest, {
+        title: "t",
+        bodyHtml: "<p>x</p>",
+        status: "published",
+      });
+      expect(post.status).toBe("draft");
+    },
+  );
+
+  it.skipIf(typeof posts?.createPost !== "function")(
+    "createPost bodyHtml does not contain onerror or script",
+    async () => {
+      const post = await posts.createPost(admin, {
+        title: "t2",
+        bodyHtml: "<img src=x onerror=alert(1)><p>ok</p>",
+      });
+      expect(post.bodyHtml).not.toMatch(/onerror|<script/i);
+    },
+  );
 });
