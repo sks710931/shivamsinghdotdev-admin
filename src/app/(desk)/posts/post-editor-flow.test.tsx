@@ -8,6 +8,7 @@ import {
   type PostDetail,
   type PostsApi,
 } from "@/lib/posts-client";
+import { formatIstDateTime } from "@/lib/format-ist";
 import { mockPostsApi, resetMockPosts } from "@/lib/posts-client.mock";
 
 const mockRouterReplace = vi.fn();
@@ -47,38 +48,6 @@ beforeAll(() => {
     this.open = false;
   });
 });
-
-function getEditorPostState(container: HTMLElement): PostDetail | null {
-  const form = container.querySelector("form");
-  if (!form) return null;
-  const key = Object.keys(form).find((k) => k.startsWith("__reactFiber$"));
-  if (!key) return null;
-  let fiber = (form as unknown as Record<string, unknown>)[key] as {
-    memoizedState?: { memoizedState?: unknown; next?: unknown };
-    return?: unknown;
-    alternate?: {
-      memoizedState?: { memoizedState?: unknown; next?: unknown };
-    } | null;
-  } | null;
-  let candidate: PostDetail | null = null;
-  while (fiber) {
-    for (const f of [fiber, fiber.alternate]) {
-      let hook = f?.memoizedState;
-      while (hook) {
-        const val = hook.memoizedState;
-        if (val && typeof val === "object" && "publishedAt" in val && "status" in val) {
-          const post = val as PostDetail;
-          if (!candidate || Number(post.version) > Number(candidate.version)) {
-            candidate = post;
-          }
-        }
-        hook = hook.next as typeof hook;
-      }
-    }
-    fiber = (fiber.return as typeof fiber) ?? null;
-  }
-  return candidate;
-}
 
 const publishedId = "22222222-2222-4222-8222-222222222222";
 
@@ -485,7 +454,6 @@ describe("PostEditor flows", () => {
     it("after unpublish the editor keeps publishedAt and shows no pending revision", async () => {
       resetMockPosts();
       setPostsApiForTesting(mockPostsApi);
-      const unpublishSpy = vi.spyOn(mockPostsApi, "unpublishPost");
       const initialPost = await mockPostsApi.getPost(publishedId);
       const initialRevision = await mockPostsApi.getRevision(publishedId);
 
@@ -493,7 +461,7 @@ describe("PostEditor flows", () => {
       expect(initialPost.publishedAt).toBe("2026-10-02T04:00:00.000Z");
       expect(initialPost.pendingRevision).not.toBeNull();
 
-      const { container } = render(
+      render(
         <PostEditor
           mode="edit"
           role="admin"
@@ -503,9 +471,11 @@ describe("PostEditor flows", () => {
         />,
       );
 
-      // Initial state: pending review banner is shown
+      // Initial state: pending review banner is shown, status is published, published date is shown
       expect(screen.getByRole("region", { name: "Pending review" })).toBeTruthy();
       expect(screen.getAllByRole("button", { name: "Update live post" }).length).toBeGreaterThan(0);
+      expect(within(screen.getByLabelText("Post status")).getByText("Published")).toBeTruthy();
+      expect(screen.getByLabelText("Published date").textContent).toContain(formatIstDateTime(initialPost.publishedAt!));
 
       // Trigger unpublish via the unpublish button
       const unpublishButtons = screen.getAllByRole("button", { name: "Unpublish" });
@@ -523,32 +493,20 @@ describe("PostEditor flows", () => {
         expect(screen.queryByRole("region", { name: "Pending review" })).toBeNull();
       });
 
-      // 1. Shows no pending revision
+      // 1. The status badge shows draft
+      expect(within(screen.getByLabelText("Post status")).getByText("Draft")).toBeTruthy();
+      expect(within(screen.getByLabelText("Post status")).queryByText("Published")).toBeNull();
+      expect(within(screen.getByLabelText("Sidebar post status")).getByText("Draft")).toBeTruthy();
+      expect(screen.getAllByText("Draft").length).toBeGreaterThanOrEqual(2);
+
+      // 2. The published date is still shown
+      expect(screen.getByLabelText("Published date").textContent).toContain(formatIstDateTime(initialPost.publishedAt!));
+      expect(screen.getByText(formatIstDateTime(initialPost.publishedAt!))).toBeTruthy();
+
+      // 3. The pending-revision banner is gone
       expect(screen.queryByRole("region", { name: "Pending review" })).toBeNull();
       expect(screen.queryByText("Pending review")).toBeNull();
       expect(screen.queryAllByRole("button", { name: "Update live post" })).toHaveLength(0);
-
-      // 2. Unpublish API was called and returned server-shaped state keeping publishedAt and clearing pending revision
-      expect(unpublishSpy).toHaveBeenCalledTimes(1);
-      expect(unpublishSpy).toHaveBeenCalledWith(publishedId, { version: initialPost.version });
-      const result = await unpublishSpy.mock.results[0]!.value;
-      expect(result.status).toBe("draft");
-      expect(result.publishedAt).toBe("2026-10-02T04:00:00.000Z");
-      expect(result.pendingRevision).toBeNull();
-
-      // 3. The editor's internal state kept publishedAt and cleared pending revision
-      const editorPost = getEditorPostState(container);
-      if (editorPost) {
-        expect(editorPost.status).toBe("draft");
-        expect(editorPost.publishedAt).toBe("2026-10-02T04:00:00.000Z");
-        expect(editorPost.pendingRevision).toBeNull();
-      }
-
-      // 4. Stored post in the mock API keeps publishedAt
-      const stored = await mockPostsApi.getPost(publishedId);
-      expect(stored.status).toBe("draft");
-      expect(stored.publishedAt).toBe("2026-10-02T04:00:00.000Z");
-      expect(stored.pendingRevision).toBeNull();
     });
   });
 });

@@ -748,7 +748,11 @@ export function PostEditor({
           <h2 className="font-display text-4xl leading-none font-medium tracking-tight text-paper">
             {mode === "create" && !post ? "New post" : "Edit post"}
           </h2>
-          {post ? <PostStatusBadge status={post.status} /> : null}
+          {post ? (
+            <span aria-label="Post status" data-testid="post-status">
+              <PostStatusBadge status={post.status} />
+            </span>
+          ) : null}
         </div>
         <p className="mt-3 text-sm text-mist">Draft and edit content inline before publishing.</p>
       </header>
@@ -995,7 +999,15 @@ export function PostEditor({
                   <p className="mt-1 text-xs leading-5 text-mist">Manage the status and publish your post.</p>
                 </div>
               </div>
-              {post ? <PostStatusBadge status={post.status} /> : <PostStatusBadge status="draft" />}
+              {post ? (
+                <span aria-label="Sidebar post status" data-testid="sidebar-post-status">
+                  <PostStatusBadge status={post.status} />
+                </span>
+              ) : (
+                <span aria-label="Sidebar post status" data-testid="sidebar-post-status">
+                  <PostStatusBadge status="draft" />
+                </span>
+              )}
             </div>
             <div className="mt-4">
               <EditorActions
@@ -1015,6 +1027,16 @@ export function PostEditor({
               />
             </div>
             <dl className="mt-4 space-y-3 border-t border-line pt-4 text-sm">
+              {post?.publishedAt ? (
+                <div className="flex items-center justify-between gap-3 text-mist">
+                  <dt className="inline-flex items-center gap-2">
+                    <Clock3 className="h-3.5 w-3.5" strokeWidth={1.75} /> Published
+                  </dt>
+                  <dd aria-label="Published date" data-testid="published-date">
+                    {formatIstDateTime(post.publishedAt)}
+                  </dd>
+                </div>
+              ) : null}
               <div className="flex items-center justify-between gap-3 text-mist">
                 <dt className="inline-flex items-center gap-2">
                   <Clock3 className="h-3.5 w-3.5" strokeWidth={1.75} /> Last edited
