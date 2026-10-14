@@ -13,14 +13,3 @@ if (process.env.CI && shouldSkip) {
     `CI is set but required environment variables are missing: ${missingEnvs.join(", ")}`,
   );
 }
-
-export function requireDbEnv(): boolean {
-  if (process.env.CI && shouldSkip) {
-    throw new Error(
-      `CI is set but required environment variables are missing: ${missingEnvs.join(", ")}`,
-    );
-  }
-  return shouldSkip;
-}
-
-export default shouldSkip;
