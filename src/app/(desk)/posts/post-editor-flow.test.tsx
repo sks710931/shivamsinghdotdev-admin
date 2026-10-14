@@ -450,6 +450,150 @@ describe("PostEditor flows", () => {
     });
   });
 
+  describe("Item (6): Status and reload when post_saved_version_failed getPost also fails (issue #49)", () => {
+    it("when create returns post_saved_version_failed and follow-up getPost also fails, does not set an empty version, shows role=status 'Saved. Reload to continue editing.' with Reload button, disables save/publish, and reloads to continue editing", async () => {
+      const savedPostId = "saved-post-uuid-49";
+      const savedPostSlug = "recovered-slug-49";
+      const recoveredVersion = "version-token-49";
+
+      const createPostSpy = vi.fn(async () => {
+        throw new ApiError({
+          status: 500,
+          code: "post_saved_version_failed",
+          error: "Draft was saved, but its version could not be retrieved.",
+          id: savedPostId,
+          slug: savedPostSlug,
+        });
+      });
+
+      let getPostCallCount = 0;
+      const getPostSpy = vi.fn(async (id: string) => {
+        getPostCallCount++;
+        if (getPostCallCount === 1) {
+          throw new ApiError({
+            status: 500,
+            code: "unknown",
+            error: "Could not load post.",
+          });
+        }
+        return {
+          ...samplePost,
+          id,
+          slug: savedPostSlug,
+          version: recoveredVersion,
+          updatedAt: "2026-10-14T11:30:00.000Z",
+        };
+      });
+
+      const patchPostSpy = vi.fn(async () => ({
+        version: "version-token-50",
+        updatedAt: "2026-10-14T12:00:00.000Z",
+        appliedTo: "live" as const,
+      }));
+
+      const publishPostSpy = vi.fn(async () => ({
+        version: "version-token-51",
+        publishedAt: "2026-10-14T12:00:00.000Z",
+      }));
+
+      const mockApi = createMockApi({
+        createPost: createPostSpy,
+        getPost: getPostSpy,
+        patchPost: patchPostSpy,
+        publishPost: publishPostSpy,
+      });
+      setPostsApiForTesting(mockApi);
+
+      render(<PostEditor mode="create" role="admin" userId="user-1" />);
+
+      const titleInput = screen.getByPlaceholderText("Write your headline…");
+      fireEvent.change(titleInput, { target: { value: "Post 49 Title" } });
+
+      const slugInput = screen.getByPlaceholderText("e.g. my-awesome-post");
+      fireEvent.change(slugInput, { target: { value: "post-49-slug" } });
+
+      const bodyInput = screen.getByTestId("mock-tinymce-editor");
+      fireEvent.change(bodyInput, { target: { value: "<p>Post 49 body</p>" } });
+
+      const saveBtn = screen.getAllByRole("button", { name: "Save draft" })[0];
+      fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(createPostSpy).toHaveBeenCalledTimes(1);
+      });
+
+      await waitFor(() => {
+        expect(getPostSpy).toHaveBeenCalledTimes(1);
+      });
+      expect(getPostSpy).toHaveBeenCalledWith(savedPostId);
+
+      // Did NOT navigate by id yet because version failed to load
+      expect(mockRouterReplace).not.toHaveBeenCalled();
+
+      // Accessible status with role="status" and text 'Saved. Reload to continue editing.'
+      const statusElement = screen.getByRole("status");
+      expect(statusElement).toBeTruthy();
+      expect(statusElement.textContent).toContain("Saved. Reload to continue editing.");
+
+      // Reload button is present
+      const reloadBtn = screen.getByRole("button", { name: "Reload" });
+      expect(reloadBtn).toBeTruthy();
+
+      // Save draft is disabled
+      expect((saveBtn as HTMLButtonElement).disabled).toBe(true);
+
+      // Clicking Save draft while saveBlocked does not retry create nor perform patch
+      fireEvent.click(saveBtn);
+      expect(createPostSpy).toHaveBeenCalledTimes(1);
+      expect(patchPostSpy).not.toHaveBeenCalled();
+
+      // Clicking Publish while saveBlocked does not publish
+      const publishBtn = screen.queryAllByRole("button", { name: "Publish" })[0];
+      if (publishBtn) {
+        fireEvent.click(publishBtn);
+      }
+      expect(publishPostSpy).not.toHaveBeenCalled();
+
+      // No error banner (role="alert")
+      expect(screen.queryByRole("alert")).toBeNull();
+
+      // Click Reload to load the version
+      fireEvent.click(reloadBtn);
+
+      await waitFor(() => {
+        expect(getPostSpy).toHaveBeenCalledTimes(2);
+      });
+      expect(getPostSpy).toHaveBeenLastCalledWith(savedPostId);
+
+      // Status is cleared
+      await waitFor(() => {
+        expect(screen.queryByText("Saved. Reload to continue editing.")).toBeNull();
+      });
+      expect(screen.queryByRole("button", { name: "Reload" })).toBeNull();
+
+      // Save draft is re-enabled
+      expect((saveBtn as HTMLButtonElement).disabled).toBe(false);
+
+      // Navigated to post URL and session storage saved
+      expect(mockRouterReplace).toHaveBeenCalledWith(`/posts/${savedPostId}`);
+      expect(sessionStorage.getItem(`desk-post-saved:${savedPostId}`)).toBeTruthy();
+
+      // Saving now performs patch with loaded version, not create
+      fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(patchPostSpy).toHaveBeenCalledTimes(1);
+      });
+      expect(createPostSpy).toHaveBeenCalledTimes(1);
+      expect(patchPostSpy).toHaveBeenCalledWith(
+        savedPostId,
+        expect.objectContaining({
+          version: recoveredVersion,
+        }),
+      );
+    });
+  });
+
   describe("Item (6): Unpublish post (after unpublish the editor keeps the server's publishedAt and shows no pending revision)", () => {
     it("after unpublish the editor keeps publishedAt and shows no pending revision", async () => {
       resetMockPosts();
