@@ -27,6 +27,9 @@ jobs:
           api_location: "" # Next.js API routes are bundled by SWA hybrid hosting
           output_location: "" # Built app content directory - optional
           ###### End of Repository/Build Configurations ######
+        env:
+          # Makes Oryx use pnpm instead of npm install
+          CUSTOM_BUILD_COMMAND: "npx -y pnpm@10.5.2 install --frozen-lockfile && npx -y pnpm@10.5.2 run build"
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
