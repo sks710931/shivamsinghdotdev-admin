@@ -82,13 +82,37 @@ guest_jar="${cookie_dir}/guest.cookies"
 
 failed=0
 
+mask() {
+  local id="${1:-}"
+  if [[ $# -eq 0 ]]; then
+    id="$(cat)"
+  fi
+  printf '%s...' "${id:0:8}"
+}
+
+mask_id() {
+  mask "$@"
+}
+
 record() {
   local label="$1"
   local expected="$2"
   local actual="$3"
   if [[ "$actual" == "$expected" ]]; then
+    while [[ "$label" =~ ([0-9a-fA-F]{8})-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12} ]]; do
+      label="${label//${BASH_REMATCH[0]}/$(mask "${BASH_REMATCH[0]}")}"
+    done
     printf 'PASS %s\n' "$label"
   else
+    while [[ "$label" =~ ([0-9a-fA-F]{8})-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12} ]]; do
+      label="${label//${BASH_REMATCH[0]}/$(mask "${BASH_REMATCH[0]}")}"
+    done
+    while [[ "$expected" =~ ([0-9a-fA-F]{8})-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12} ]]; do
+      expected="${expected//${BASH_REMATCH[0]}/$(mask "${BASH_REMATCH[0]}")}"
+    done
+    while [[ "$actual" =~ ([0-9a-fA-F]{8})-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12} ]]; do
+      actual="${actual//${BASH_REMATCH[0]}/$(mask "${BASH_REMATCH[0]}")}"
+    done
     printf 'FAIL %s (expected %s, got %s)\n' "$label" "$expected" "$actual"
     failed=1
     exit 1
@@ -150,21 +174,21 @@ record "admin login" "200" "$(login_code "$admin_jar" "$admin_email" "$admin_pas
 record "admin GET /api/posts" "200" "$(http_code -b "$admin_jar" "${BASE}/api/posts")"
 record "guest login" "200" "$(login_code "$guest_jar" "guest@localhost.test" "$guest_password")"
 record "guest GET /api/posts" "200" "$(http_code -b "$guest_jar" "${BASE}/api/posts")"
-record "guest GET /api/posts/00000000-0000-0000-0000-000000000000" "404" \
+record "guest GET /api/posts/$(mask "00000000-0000-0000-0000-000000000000")" "404" \
   "$(http_code -b "$guest_jar" "${BASE}/api/posts/00000000-0000-0000-0000-000000000000")"
 
 other_post_id=""
 if other_post_id="$(read_env TEST_OTHER_POST_ID)" && [[ -n "$other_post_id" ]]; then
-  record "guest GET /api/posts/${other_post_id}" "404" \
+  record "guest GET /api/posts/$(mask "$other_post_id")" "404" \
     "$(http_code -b "$guest_jar" "${BASE}/api/posts/${other_post_id}")"
-  record "admin GET /api/posts/${other_post_id}" "200" \
+  record "admin GET /api/posts/$(mask "$other_post_id")" "200" \
     "$(http_code -b "$admin_jar" "${BASE}/api/posts/${other_post_id}")"
-  record "guest GET /api/posts/${other_post_id}/revision" "404" \
+  record "guest GET /api/posts/$(mask "$other_post_id")/revision" "404" \
     "$(http_code -b "$guest_jar" "${BASE}/api/posts/${other_post_id}/revision")"
   # A draft has no pending revision, so admin sees the post but not a revision.
-  record "admin GET /api/posts/${other_post_id}/revision" "404" \
+  record "admin GET /api/posts/$(mask "$other_post_id")/revision" "404" \
     "$(http_code -b "$admin_jar" "${BASE}/api/posts/${other_post_id}/revision")"
-  record "unauthenticated GET /api/posts/${other_post_id}" "401" \
+  record "unauthenticated GET /api/posts/$(mask "$other_post_id")" "401" \
     "$(http_code "${BASE}/api/posts/${other_post_id}")"
 else
   printf 'SKIP guest GET /api/posts/$TEST_OTHER_POST_ID (TEST_OTHER_POST_ID is not set)\n'
