@@ -69,7 +69,7 @@ export async function publishPost(actor: PostActor, id: string, input: unknown):
       .input("id", sql.UniqueIdentifier, id)
       .input("body", sql.NVarChar(sql.MAX), sanitizeHtml(String(post.BodyHtml ?? "")))
       .query(`UPDATE dbo.BlogPost
-              SET Status = 'published', BodyHtml = @body, PublishedAt = SYSUTCDATETIME(), UpdatedAt = SYSUTCDATETIME()
+              SET Status = 'published', BodyHtml = @body, PublishedAt = COALESCE(PublishedAt, SYSUTCDATETIME()), UpdatedAt = SYSUTCDATETIME()
               WHERE Id = @id`);
   });
   return done(actor, id);
@@ -152,7 +152,10 @@ export async function publishRevision(actor: PostActor, id: string, input: unkno
                 WHERE Id = @id`);
     } catch (error) {
       const n = error && typeof error === "object" && "number" in error ? error.number : undefined;
-      if (n === 2601 || n === 2627) throw new AuthError("That URL slug is already used.", 409, "slug_taken");
+      const msg = error && typeof error === "object" && "message" in error ? String(error.message) : "";
+      if ((n === 2601 || n === 2627) && msg.includes("UQ_BlogPost_Slug")) {
+        throw new AuthError("That URL slug is already used.", 409, "slug_taken");
+      }
       throw error;
     }
     await new sql.Request(tx)
