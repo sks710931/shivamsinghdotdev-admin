@@ -26,7 +26,15 @@ function readSavedStamp(postId: string): string | null {
   }
 }
 
-export function EditPostScreen({ postId, role }: { postId: string; role: UserRole }) {
+export function EditPostScreen({
+  postId,
+  role,
+  userId,
+}: {
+  postId: string;
+  role: UserRole;
+  userId: string;
+}) {
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<LoadState>({ kind: "loading" });
 
@@ -111,6 +119,7 @@ export function EditPostScreen({ postId, role }: { postId: string; role: UserRol
     <PostEditor
       mode="edit"
       role={role}
+      userId={userId}
       initialPost={state.post}
       initialRevision={state.revision}
       initialSavedAt={state.savedAt}

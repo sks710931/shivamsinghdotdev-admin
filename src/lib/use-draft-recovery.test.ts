@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearSnapshot,
   loadSnapshot,
+  pruneSnapshots,
   saveSnapshot,
   type DraftSnapshot,
 } from "./draft-snapshot";
@@ -12,16 +13,20 @@ vi.mock("./draft-snapshot", () => ({
   loadSnapshot: vi.fn(() => null),
   saveSnapshot: vi.fn(() => true),
   clearSnapshot: vi.fn(),
+  pruneSnapshots: vi.fn(),
 }));
 
 const mockedLoad = vi.mocked(loadSnapshot);
 const mockedSave = vi.mocked(saveSnapshot);
 const mockedClear = vi.mocked(clearSnapshot);
+const mockedPrune = vi.mocked(pruneSnapshots);
 
 const START = new Date("2026-10-14T12:00:00.000Z");
+const USER_ID = "user-1";
 
 function snapshot(overrides: Partial<DraftSnapshot> = {}): DraftSnapshot {
   return {
+    userId: USER_ID,
     postId: "post-1",
     title: "Draft title",
     body: "Draft body",
@@ -37,6 +42,7 @@ describe("useDraftRecovery", () => {
     mockedLoad.mockReset();
     mockedSave.mockReset();
     mockedClear.mockReset();
+    mockedPrune.mockReset();
     mockedLoad.mockReturnValue(null);
     mockedSave.mockReturnValue(true);
   });
@@ -47,11 +53,13 @@ describe("useDraftRecovery", () => {
 
   it("leaves pending null when nothing is stored", () => {
     const { result } = renderHook(() =>
-      useDraftRecovery("post-1", "Title", "Body"),
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body"),
     );
 
     expect(mockedLoad).toHaveBeenCalledTimes(1);
-    expect(mockedLoad).toHaveBeenCalledWith("post-1");
+    expect(mockedLoad).toHaveBeenCalledWith(USER_ID, "post-1");
+    expect(mockedPrune).toHaveBeenCalledTimes(1);
+    expect(mockedPrune).toHaveBeenCalledWith(USER_ID);
     expect(result.current.pending).toBeNull();
   });
 
@@ -61,7 +69,7 @@ describe("useDraftRecovery", () => {
     );
 
     const { result } = renderHook(() =>
-      useDraftRecovery("post-1", "Title", "Body"),
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body"),
     );
 
     expect(result.current.pending).toBeNull();
@@ -72,7 +80,7 @@ describe("useDraftRecovery", () => {
     mockedLoad.mockReturnValue(titleDiffers);
 
     const titleHook = renderHook(() =>
-      useDraftRecovery("post-1", "Title", "Body"),
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body"),
     );
     expect(titleHook.result.current.pending).toEqual(titleDiffers);
     titleHook.unmount();
@@ -81,7 +89,7 @@ describe("useDraftRecovery", () => {
     mockedLoad.mockReturnValue(bodyDiffers);
 
     const bodyHook = renderHook(() =>
-      useDraftRecovery("post-1", "Title", "Body"),
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body"),
     );
     expect(bodyHook.result.current.pending).toEqual(bodyDiffers);
   });
@@ -92,7 +100,7 @@ describe("useDraftRecovery", () => {
 
     const { result, rerender } = renderHook(
       ({ title, body }: { title: string; body: string }) =>
-        useDraftRecovery("post-1", title, body),
+        useDraftRecovery(USER_ID, "post-1", title, body),
       { initialProps: { title: "Title", body: "Body" } },
     );
 
@@ -113,7 +121,7 @@ describe("useDraftRecovery", () => {
 
     const { result, rerender } = renderHook(
       ({ postId }: { postId: string }) =>
-        useDraftRecovery(postId, "Title", "Body"),
+        useDraftRecovery(USER_ID, postId, "Title", "Body"),
       { initialProps: { postId: "post-1" } },
     );
 
@@ -121,14 +129,14 @@ describe("useDraftRecovery", () => {
 
     rerender({ postId: "post-2" });
 
-    expect(mockedLoad).toHaveBeenNthCalledWith(2, "post-2");
+    expect(mockedLoad).toHaveBeenNthCalledWith(2, USER_ID, "post-2");
     expect(result.current.pending).toEqual(second);
   });
 
   it("debounces saveSnapshot by 1000ms and keeps the latest title and body", () => {
     const { rerender } = renderHook(
       ({ title, body }: { title: string; body: string }) =>
-        useDraftRecovery("post-1", title, body),
+        useDraftRecovery(USER_ID, "post-1", title, body),
       { initialProps: { title: "Title", body: "Body" } },
     );
 
@@ -152,6 +160,7 @@ describe("useDraftRecovery", () => {
     });
     expect(mockedSave).toHaveBeenCalledTimes(1);
     expect(mockedSave).toHaveBeenLastCalledWith({
+      userId: USER_ID,
       postId: "post-1",
       title: "Title 3",
       body: "Body 3",
@@ -162,7 +171,7 @@ describe("useDraftRecovery", () => {
   it("does not save after unmount", () => {
     const { rerender, unmount } = renderHook(
       ({ title, body }: { title: string; body: string }) =>
-        useDraftRecovery("post-1", title, body),
+        useDraftRecovery(USER_ID, "post-1", title, body),
       { initialProps: { title: "Title", body: "Body" } },
     );
 
@@ -184,7 +193,7 @@ describe("useDraftRecovery", () => {
     mockedLoad.mockReturnValue(stored);
 
     const { result } = renderHook(() =>
-      useDraftRecovery("post-1", "Title", "Body"),
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body"),
     );
 
     expect(result.current.pending).toEqual(stored);
@@ -203,7 +212,7 @@ describe("useDraftRecovery", () => {
 
     const { result, rerender } = renderHook(
       ({ title, body }: { title: string; body: string }) =>
-        useDraftRecovery("post-1", title, body),
+        useDraftRecovery(USER_ID, "post-1", title, body),
       { initialProps: { title: "Title", body: "Body" } },
     );
 
@@ -230,6 +239,7 @@ describe("useDraftRecovery", () => {
 
     expect(mockedSave).toHaveBeenCalledTimes(1);
     expect(mockedSave).toHaveBeenLastCalledWith({
+      userId: USER_ID,
       postId: "post-1",
       title: "Title edited",
       body: "Body edited",
@@ -242,7 +252,7 @@ describe("useDraftRecovery", () => {
     mockedLoad.mockReturnValue(stored);
 
     const { result } = renderHook(() =>
-      useDraftRecovery("post-1", "Title", "Body"),
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body"),
     );
 
     let restored: DraftSnapshot | null = null;
@@ -265,7 +275,7 @@ describe("useDraftRecovery", () => {
     mockedLoad.mockReturnValue(snapshot());
 
     const { result } = renderHook(() =>
-      useDraftRecovery("post-1", "Title", "Body"),
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body"),
     );
 
     act(() => {
@@ -273,7 +283,7 @@ describe("useDraftRecovery", () => {
     });
 
     expect(mockedClear).toHaveBeenCalledTimes(1);
-    expect(mockedClear).toHaveBeenCalledWith("post-1");
+    expect(mockedClear).toHaveBeenCalledWith(USER_ID, "post-1");
     expect(result.current.pending).toBeNull();
   });
 
@@ -282,7 +292,7 @@ describe("useDraftRecovery", () => {
     mockedLoad.mockReturnValue(stored);
 
     const { result } = renderHook(() =>
-      useDraftRecovery("post-1", "Title", "Body"),
+      useDraftRecovery(USER_ID, "post-1", "Title", "Body"),
     );
 
     act(() => {
@@ -290,7 +300,7 @@ describe("useDraftRecovery", () => {
     });
 
     expect(mockedClear).toHaveBeenCalledTimes(1);
-    expect(mockedClear).toHaveBeenCalledWith("post-1");
+    expect(mockedClear).toHaveBeenCalledWith(USER_ID, "post-1");
     expect(result.current.pending).toEqual(stored);
   });
 });

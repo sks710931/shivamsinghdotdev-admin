@@ -209,6 +209,7 @@ function clearKeys(current: Record<string, string>, keys: string[]): Record<stri
 export function PostEditor({
   mode,
   role,
+  userId,
   initialPost,
   initialRevision = null,
   initialNotice = null,
@@ -216,6 +217,7 @@ export function PostEditor({
 }: {
   mode: "create" | "edit";
   role: UserRole;
+  userId: string;
   initialPost?: PostDetail;
   initialRevision?: RevisionDetail | null;
   initialNotice?: string | null;
@@ -241,7 +243,7 @@ export function PostEditor({
   const [blocksOpen, setBlocksOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [toolbar, setToolbar] = useState<ToolbarSnapshot>(defaultToolbar);
-  const recovery = useDraftRecovery(post?.id ?? "new", fields.title, fields.body);
+  const recovery = useDraftRecovery(userId, post?.id ?? "new", fields.title, fields.body);
   const editorRef = useRef<TinyMCEEditor | null>(null);
   const previewRef = useRef<HTMLDialogElement>(null);
   const dirty = canonical(fields) !== canonical(savedFields);

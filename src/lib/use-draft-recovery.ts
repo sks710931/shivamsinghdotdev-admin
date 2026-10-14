@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   clearSnapshot,
   loadSnapshot,
+  pruneSnapshots,
   saveSnapshot,
   type DraftSnapshot,
 } from "./draft-snapshot";
@@ -16,6 +17,7 @@ export interface UseDraftRecoveryResult {
 }
 
 export function useDraftRecovery(
+  userId: string,
   postId: string,
   title: string,
   body: string,
@@ -35,18 +37,20 @@ export function useDraftRecovery(
   // Opened title and body for this post. Later keystrokes must not move it, or a
   // recovered draft is judged against text the user has already changed.
   const [initial, setInitial] = useState(() => ({
+    userId,
     postId,
     title,
     body,
-    pending: differs(loadSnapshot(postId)),
+    pending: differs(loadSnapshot(userId, postId)),
   }));
 
-  if (initial.postId !== postId) {
+  if (initial.userId !== userId || initial.postId !== postId) {
     setInitial({
+      userId,
       postId,
       title,
       body,
-      pending: differs(loadSnapshot(postId)),
+      pending: differs(loadSnapshot(userId, postId)),
     });
   }
 
@@ -56,6 +60,10 @@ export function useDraftRecovery(
   useEffect(() => {
     pendingRef.current = pending;
   }, [pending]);
+
+  useEffect(() => {
+    pruneSnapshots(userId);
+  }, [userId]);
 
   useEffect(() => {
     // Leave a recovered snapshot in place until the user restores or discards it.
@@ -69,6 +77,7 @@ export function useDraftRecovery(
 
     const timeoutId = window.setTimeout(() => {
       saveSnapshot({
+        userId,
         postId,
         title,
         body,
@@ -79,7 +88,7 @@ export function useDraftRecovery(
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [postId, title, body, pending, initial.title, initial.body]);
+  }, [userId, postId, title, body, pending, initial.title, initial.body]);
 
   const restore = useCallback((): DraftSnapshot | null => {
     const snapshot = pendingRef.current;
@@ -88,13 +97,13 @@ export function useDraftRecovery(
   }, []);
 
   const discard = useCallback((): void => {
-    clearSnapshot(postId);
+    clearSnapshot(userId, postId);
     setInitial((prev) => ({ ...prev, pending: null }));
-  }, [postId]);
+  }, [userId, postId]);
 
   const clear = useCallback((): void => {
-    clearSnapshot(postId);
-  }, [postId]);
+    clearSnapshot(userId, postId);
+  }, [userId, postId]);
 
   return { pending, restore, discard, clear };
 }

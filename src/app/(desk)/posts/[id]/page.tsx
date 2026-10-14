@@ -15,5 +15,5 @@ export default async function EditPostPage(props: PageProps<"/posts/[id]">) {
     redirect("/login");
   }
 
-  return <EditPostScreen key={id} postId={id} role={user.role} />;
+  return <EditPostScreen key={id} postId={id} role={user.role} userId={user.id} />;
 }
