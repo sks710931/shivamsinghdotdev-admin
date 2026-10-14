@@ -69,14 +69,41 @@ function isSafeImgSrc(value: string): boolean {
   return false;
 }
 
+function isRelativeImgSrc(value: string): boolean {
+  if (isForbiddenUrl(value) || FORBIDDEN_SCHEME_PATTERN.test(value)) {
+    return false;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
+    return false;
+  }
+  if (trimmed.startsWith("//") || trimmed.startsWith("/\\")) {
+    return false;
+  }
+  if (/^\/media\/[^/\\]/.test(trimmed)) {
+    return false;
+  }
+  return true;
+}
+
+const relativeImages = new WeakMap<Element, { src: string; alt?: string }>();
+
 const DOMPURIFY_CONFIG: Config = Object.freeze({
-  ALLOWED_TAGS: [...ALLOWED_TAGS],
-  ALLOWED_ATTR: ALL_ALLOWED_ATTR,
+  ALLOWED_TAGS: [...ALLOWED_TAGS, "span"],
+  ALLOWED_ATTR: [...ALL_ALLOWED_ATTR, "role", "aria-label", "class"],
   ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
   ALLOW_DATA_ATTR: false,
-  ALLOW_ARIA_ATTR: false,
+  ALLOW_ARIA_ATTR: true,
   ALLOW_UNKNOWN_PROTOCOLS: false,
 });
+
+const ALLOWED_ATTRIBUTES_EXTENDED: Record<string, readonly string[]> = {
+  ...ALLOWED_ATTRIBUTES,
+  span: Object.freeze(["role", "aria-label", "class"] as const),
+};
 
 function onSanitizeAttribute(currentNode: Element, data: UponSanitizeAttributeHookEvent): void {
   const attrName = data.attrName.toLowerCase();
@@ -89,7 +116,7 @@ function onSanitizeAttribute(currentNode: Element, data: UponSanitizeAttributeHo
   }
 
   // 2. Enforce per-tag allowed attributes according to ALLOWED_ATTRIBUTES
-  const allowedForTag = ALLOWED_ATTRIBUTES[tagName];
+  const allowedForTag = ALLOWED_ATTRIBUTES_EXTENDED[tagName];
   if (!allowedForTag || !allowedForTag.includes(attrName) || attrName === "data-drop") {
     data.keepAttr = false;
     return;
@@ -105,12 +132,33 @@ function onSanitizeAttribute(currentNode: Element, data: UponSanitizeAttributeHo
 
   if (attrName === "src") {
     if (!isSafeImgSrc(data.attrValue)) {
+      if (tagName === "img" && isRelativeImgSrc(data.attrValue)) {
+        relativeImages.set(currentNode, {
+          src: data.attrValue.trim(),
+          alt: currentNode.getAttribute("alt") ?? undefined,
+        });
+      }
       data.keepAttr = false;
       return;
     }
   }
 
-  // 4. Class whitelist: language-* for pre/code, task-list for ul
+  if (attrName === "alt" && tagName === "img") {
+    const existing = relativeImages.get(currentNode);
+    if (existing) {
+      existing.alt = data.attrValue;
+    }
+  }
+
+  if (attrName === "role") {
+    if (tagName === "span" && data.attrValue === "img") {
+      return;
+    }
+    data.keepAttr = false;
+    return;
+  }
+
+  // 4. Class whitelist: language-* for pre/code, task-list for ul, image-placeholder for span
   if (attrName === "class") {
     const keptClasses = data.attrValue
       .split(/\s+/)
@@ -120,6 +168,9 @@ function onSanitizeAttribute(currentNode: Element, data: UponSanitizeAttributeHo
         }
         if (tagName === "ul") {
           return cls === "task-list";
+        }
+        if (tagName === "span") {
+          return cls === "image-placeholder";
         }
         return false;
       });
@@ -136,8 +187,24 @@ function onAfterSanitizeAttributes(currentNode: Element): void {
   if (tagName === "a" && currentNode.hasAttribute("href")) {
     currentNode.setAttribute("rel", "noopener noreferrer");
   }
-  if (tagName === "img" && !currentNode.hasAttribute("src")) {
-    currentNode.remove();
+  if (tagName === "img") {
+    const relativeData = relativeImages.get(currentNode);
+    if (relativeData) {
+      const alt = (currentNode.getAttribute("alt") ?? relativeData.alt ?? "").trim();
+      const label = alt || relativeData.src || "Image";
+      const doc = currentNode.ownerDocument;
+      const placeholder = doc.createElement("span");
+      placeholder.setAttribute("role", "img");
+      placeholder.setAttribute("aria-label", label);
+      placeholder.className = "image-placeholder";
+      placeholder.textContent = `[Image: ${label}]`;
+      currentNode.replaceWith(placeholder);
+      return;
+    }
+    if (!currentNode.hasAttribute("src")) {
+      currentNode.remove();
+      return;
+    }
   }
   if (tagName === "input") {
     const input = currentNode as HTMLInputElement;

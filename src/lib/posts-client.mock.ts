@@ -324,7 +324,7 @@ export const mockPostsApi: PostsApi = {
       pendingRevision: null,
     };
     memory.posts.unshift(post);
-    return { id: post.id, slug: post.slug };
+    return { id: post.id, slug: post.slug, version: post.version };
   },
 
   async patchPost(id: string, input: PatchPostInput): Promise<PatchPostResult> {
