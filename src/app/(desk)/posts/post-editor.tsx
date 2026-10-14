@@ -705,6 +705,7 @@ export function PostEditor({
             const s = recovery.restore();
             if (s) {
               setFields((f) => ({ ...f, title: s.title, body: s.body }));
+              editorRef.current?.setContent(s.body);
             }
           }}
           onDiscard={() => {
