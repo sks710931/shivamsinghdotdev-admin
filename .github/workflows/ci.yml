@@ -133,6 +133,8 @@ jobs:
             curl -sf -o /dev/null http://localhost:3000/login && break
             sleep 2
           done
+      - name: Smoke host guard test
+        run: bash scripts/smoke-host-guard-test.sh
       - name: API smoke test
         run: pnpm smoke:local
       - name: App log on failure
