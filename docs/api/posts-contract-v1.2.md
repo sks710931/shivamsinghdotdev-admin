@@ -38,4 +38,8 @@ Removed: `DELETE /api/posts/[id]` (use `/archive`), and the `revisionVersion` fi
 
 ## v1.2.1 (additive, 14 Oct 2026)
 
-POST /api/posts now also returns 'version' (the new BlogPost RowVersion, base64) alongside 'id' and 'slug', with 201; this is additive and backward compatible; clients keep a fallback GET /api/posts/[id] until the server ships it; it lets the first autosave (ADR-0003) PATCH immediately. Also note that GET /api/posts list items include hasPendingRevision.
+- Route table additions: 'GET /api/posts' (any; guest sees own posts; list items include hasPendingRevision) and 'POST /api/posts' (any; creates a draft; returns 201 with id, slug, version).
+- POST /api/posts always creates status draft and ignores any status in the body for every role, including admin; the only ways to go live are the ADR-0004 transition routes.
+- For a guest, another user's post and a nonexistent id both return 404 not_found with an identical body on GET /api/posts/[id], PATCH /api/posts/[id] and GET /api/posts/[id]/revision, so existence is not disclosed.
+- A stale version on PATCH returns 409 stale_version and the error body also includes the current 'version' so the client can offer reload.
+- Clients keep a fallback GET after create until the server ships version in the create response.
