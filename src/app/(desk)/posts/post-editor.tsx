@@ -28,6 +28,7 @@ import type { UserRole } from "@/lib/directory";
 import { normalizeEditorHtml } from "@/lib/editor-html";
 import { formatIstDateTime, formatSavedIst } from "@/lib/format-ist";
 import { getPostActions } from "@/lib/post-actions";
+import { safeHtml } from "@/lib/safe-html";
 import {
   ApiError,
   getPostsApi,
@@ -149,7 +150,7 @@ function keywords(value: string): string[] {
 }
 
 function previewHtml(html: string): string {
-  return normalizeEditorHtml(html).replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "");
+  return safeHtml(normalizeEditorHtml(html));
 }
 
 function emptyFields(): Fields {
