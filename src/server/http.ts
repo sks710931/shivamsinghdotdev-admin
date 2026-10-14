@@ -11,6 +11,8 @@ function blocked(): never {
  * `Origin` must equal APP_ORIGIN, or the APP_URL origin when APP_ORIGIN is unset. Production with neither fails closed.
  * Local dev with neither: `Origin` must be http://<Host>. X-Forwarded-Host is never trusted.
  */
+let badOriginConfigLogged = false;
+
 export function assertSameOrigin(request: Request): void {
   const origin = request.headers.get("origin");
   if (!origin) blocked();
@@ -29,6 +31,10 @@ export function assertSameOrigin(request: Request): void {
     try {
       expected = new URL(configured).origin;
     } catch {
+      if (!badOriginConfigLogged) {
+        badOriginConfigLogged = true;
+        console.error("APP_ORIGIN/APP_URL is not a valid URL; blocking state-changing requests.");
+      }
       blocked();
     }
     if (parsed.origin !== expected) blocked();
