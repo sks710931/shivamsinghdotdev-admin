@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 const m = "@/server/posts";
 const posts = await import(/* @vite-ignore */ m).catch((e) => { if (process.env.DB_SERVER) console.error("authz-data: cannot load @/server/posts:", e); return null; });
 
+const um = "@/server/post-update";
+const upd = await import(/* @vite-ignore */ um).catch(() => null);
+
 const guest = { id: String(process.env.TEST_GUEST_ID ?? ""), role: "guest" as const };
 const admin = { id: String(process.env.TEST_ADMIN_ID ?? ""), role: "admin" as const };
 const otherPostId = String(process.env.TEST_OTHER_POST_ID ?? "");
@@ -48,11 +51,30 @@ describe.skipIf(!posts || typeof posts.getPostById !== "function" || !process.en
     expect(post.id).toBe(otherPostId);
   });
 
-  it.skipIf(typeof posts?.updatePost !== "function")(
+  it.skipIf(typeof upd?.updatePost !== "function")(
     "a guest calling updatePost with force: true gets 403",
     async () => {
-      const outcome = await settle(() => posts.updatePost(guest, otherPostId, { force: true }));
+      const created = await posts.createPost(guest, {
+        title: "f",
+        slug: `sec-${Date.now()}-f`,
+        bodyHtml: "<p>x</p>",
+      });
+      const stored = await posts.getPostById(admin, created.id);
+      const outcome = await settle(() =>
+        upd.updatePost(guest, created.id, { title: "f2", version: stored.version, force: true }),
+      );
       expect(readError(outcome).status).toBe(403);
+    },
+  );
+
+  it.skipIf(typeof upd?.updatePost !== "function")(
+    "a guest updatePost on another author post resolves null or rejects with status 404",
+    async () => {
+      const outcome = await settle(() =>
+        upd.updatePost(guest, otherPostId, { title: "z", version: "AAAAAAAAAAA=" }),
+      );
+      if (outcome === null) return;
+      expect(readError(outcome).status).toBe(404);
     },
   );
 
