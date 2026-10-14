@@ -666,20 +666,27 @@ record "guest GET admin post revision returns 404" "404" "$code"
 guest_rev_err="$(extract_json '.code // empty' "$resp_json")"
 record "guest GET admin post revision error code is not_found" "not_found" "$guest_rev_err"
 
-# Guest isolation on actions: as guest, POST publish, unpublish, archive and revision/publish on another user's (admin's) post must return 404
+# Guest isolation on actions: as guest, POST publish, unpublish, archive and revision/publish on another user's (admin's) post must not return 2xx and must be byte-identical to random UUID (no existence leak)
 guest_act_payload="$(jq -n --arg version "$iso_v_before" '{version: $version}')"
+resp_act_admin="${cookie_dir}/resp_act_admin.json"
+resp_act_random="${cookie_dir}/resp_act_random.json"
 
-code="$(call_api "$resp_json" -b "$guest_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$guest_act_payload" "${BASE}/api/posts/${iso_post_id}/publish")"
-record "guest POST admin post publish returns 404" "404" "$code"
+for act in "publish" "unpublish" "archive" "revision/publish"; do
+  code="$(call_api "$resp_act_admin" -b "$guest_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$guest_act_payload" "${BASE}/api/posts/${iso_post_id}/${act}")"
+  status_not_2xx="not-2xx"
+  if [[ "$code" == "000" || "$code" =~ ^2 ]]; then
+    status_not_2xx="$code"
+  fi
+  record "guest POST admin post ${act} status is not 2xx" "not-2xx" "$status_not_2xx"
 
-code="$(call_api "$resp_json" -b "$guest_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$guest_act_payload" "${BASE}/api/posts/${iso_post_id}/unpublish")"
-record "guest POST admin post unpublish returns 404" "404" "$code"
+  code_random="$(call_api "$resp_act_random" -b "$guest_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$guest_act_payload" "${BASE}/api/posts/${random_uuid}/${act}")"
 
-code="$(call_api "$resp_json" -b "$guest_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$guest_act_payload" "${BASE}/api/posts/${iso_post_id}/archive")"
-record "guest POST admin post archive returns 404" "404" "$code"
-
-code="$(call_api "$resp_json" -b "$guest_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$guest_act_payload" "${BASE}/api/posts/${iso_post_id}/revision/publish")"
-record "guest POST admin post revision/publish returns 404" "404" "$code"
+  cmp_result="differ"
+  if [[ "$code" != "000" && ! "$code" =~ ^2 && "$code" == "$code_random" ]] && cmp -s "$resp_act_admin" "$resp_act_random" && [[ "$(cat "$resp_act_admin")" == "$(cat "$resp_act_random")" ]]; then
+    cmp_result="identical"
+  fi
+  record "guest POST admin post ${act} status and response body are byte-identical to random uuid (no existence leak)" "identical" "$cmp_result"
+done
 
 # Assert post is unchanged afterwards
 code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${iso_post_id}")"
