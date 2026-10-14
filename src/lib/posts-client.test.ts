@@ -169,12 +169,14 @@ describe("mockPostsApi", () => {
 
   it("requires force when the live row moved after the revision was started", async () => {
     const live = await mockPostsApi.getPost(publishedId);
+    const revision = await mockPostsApi.getRevision(publishedId);
     const unpublished = await mockPostsApi.unpublishPost(publishedId, { version: live.version });
+    await mockPostsApi.publishPost(publishedId, { version: unpublished.version });
     const stale = await mockPostsApi
-      .publishPost(publishedId, { version: unpublished.version })
+      .publishRevision(publishedId, { version: revision.version })
       .catch((caught: unknown) => caught);
     expect(stale).toMatchObject({ code: "revision_stale" });
-    const forced = await mockPostsApi.publishPost(publishedId, { version: unpublished.version, force: true });
+    const forced = await mockPostsApi.publishRevision(publishedId, { version: revision.version, force: true });
     const after = await mockPostsApi.getPost(publishedId);
     expect(after.status).toBe("published");
     expect(after.pendingRevision).toBeNull();

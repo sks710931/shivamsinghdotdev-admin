@@ -496,20 +496,21 @@ export function PostEditor({
 
   function publish(force: boolean) {
     void run(async () => {
-      // A draft publish writes the live row. A leftover revision (unpublish keeps
-      // one) must not be sent as revisionVersion, or it would replace the draft.
+      // A draft publish writes the live row. A set-aside revision stays off this
+      // request; a live post with a pending revision uses publishRevision.
       const draftHoldsRevision = Boolean(post && post.status !== "published" && revision);
       const model = dirty || !post || draftHoldsRevision ? await persist({ navigate: false }) : { post, revision };
       if (model.post.status === "archived") {
         setBanner("Archived posts cannot be published.");
         return;
       }
-      const publishingRevision = model.post.status === "published" ? model.revision : null;
-      const result = await getPostsApi().publishPost(model.post.id, {
-        version: model.post.version,
-        ...(publishingRevision ? { revisionVersion: publishingRevision.version } : {}),
-        ...(force ? { force: true } : {}),
-      });
+      const publishingRevision = model.post.status === "published" && model.revision ? model.revision : null;
+      const result = publishingRevision
+        ? await getPostsApi().publishRevision(model.post.id, {
+            version: publishingRevision.version,
+            ...(force ? { force: true } : {}),
+          })
+        : await getPostsApi().publishPost(model.post.id, { version: model.post.version });
       const source = publishingRevision ?? model.post;
       const next: PostDetail = {
         ...model.post,

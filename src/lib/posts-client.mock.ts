@@ -423,14 +423,38 @@ export const mockPostsApi: PostsApi = {
         code: "archived",
       });
     }
+    if (post.status === "published") {
+      throw new ApiError({
+        status: 409,
+        error: "Only a draft can be published.",
+        code: "not_draft",
+      });
+    }
     if (input.version !== post.version) {
       throw stale(post);
     }
-    const revision = memory.revisions.get(id) ?? null;
-    if (revision && input.revisionVersion && input.revisionVersion !== revision.version) {
-      throw stale(post);
+    const now = new Date().toISOString();
+    post.status = "published";
+    post.publishedAt = now;
+    post.updatedAt = now;
+    post.version = bump(post.version);
+    return { version: post.version, publishedAt: now };
+  },
+
+  async publishRevision(id: string, input: PublishPostInput): Promise<PublishPostResult> {
+    const post = requirePost(id);
+    if (post.status !== "published") {
+      throw new ApiError({
+        status: 409,
+        error: "Only a published post can publish a revision.",
+        code: "not_published",
+      });
     }
-    if (revision && revision.baseVersion !== post.version && input.force !== true) {
+    const revision = memory.revisions.get(id);
+    if (!revision) {
+      throw notFound("That revision was not found.");
+    }
+    if (input.force !== true && (input.version !== revision.version || revision.baseVersion !== post.version)) {
       throw new ApiError({
         status: 409,
         error: "The live post changed after this revision was started.",
@@ -440,17 +464,15 @@ export const mockPostsApi: PostsApi = {
         updatedBy: post.authorName,
       });
     }
-    if (revision) {
-      post.title = revision.title;
-      post.slug = revision.slug;
-      post.summary = revision.summary;
-      post.tags = revision.tags.slice();
-      post.seoTitle = revision.seoTitle;
-      post.seoKeywords = revision.seoKeywords.slice();
-      post.bodyHtml = revision.bodyHtml;
-      memory.revisions.delete(id);
-      post.pendingRevision = null;
-    }
+    post.title = revision.title;
+    post.slug = revision.slug;
+    post.summary = revision.summary;
+    post.tags = revision.tags.slice();
+    post.seoTitle = revision.seoTitle;
+    post.seoKeywords = revision.seoKeywords.slice();
+    post.bodyHtml = revision.bodyHtml;
+    memory.revisions.delete(id);
+    post.pendingRevision = null;
     const now = new Date().toISOString();
     post.status = "published";
     post.publishedAt = now;

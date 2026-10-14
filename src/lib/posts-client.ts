@@ -53,7 +53,7 @@ export type PostDetail = {
 /**
  * GET /api/posts/[id]/revision returns the post shape plus revision fields.
  * `version` is the revision token. `baseVersion` is the live version the
- * revision was based on. Publish sends the live version separately.
+ * revision was based on. publishRevision sends this revision token.
  */
 export type RevisionDetail = {
   id: string;
@@ -100,7 +100,8 @@ export type CreatePostResult = {
  * PATCH version is the live BlogPost token for a draft (and for the first
  * save of a published post, which creates the revision). Once a pending
  * revision exists, later saves send the revision token from GET revision or
- * from the previous PATCH result. The live token is what publish checks.
+ * from the previous PATCH result. publishPost checks the live token.
+ * publishRevision checks the revision token.
  */
 export type PatchPostInput = {
   version: string;
@@ -120,9 +121,14 @@ export type PatchPostResult = {
   updatedAt: string;
 };
 
+/**
+ * POST /api/posts/{id}/publish publishes a draft. `version` is the live token.
+ * POST /api/posts/{id}/revision/publish publishes the pending revision.
+ * `version` there is the revision token. Both accept optional `force` and
+ * return PublishPostResult.
+ */
 export type PublishPostInput = {
   version: string;
-  revisionVersion?: string;
   force?: boolean;
 };
 
@@ -147,6 +153,8 @@ export const API_ERROR_CODES = [
   "slug_taken",
   "revision_stale",
   "archived",
+  "not_draft",
+  "not_published",
   "unknown",
 ] as const;
 
@@ -561,6 +569,7 @@ export interface PostsApi {
   getRevision(id: string): Promise<RevisionDetail>;
   deleteRevision(id: string, input: RevisionMutationInput): Promise<void>;
   publishPost(id: string, input: PublishPostInput): Promise<PublishPostResult>;
+  publishRevision(id: string, input: PublishPostInput): Promise<PublishPostResult>;
   unpublishPost(id: string, input: RevisionMutationInput): Promise<UnpublishPostResult>;
   archivePost(id: string, input: RevisionMutationInput): Promise<void>;
 }
@@ -593,12 +602,19 @@ export const httpPostsApi: PostsApi = {
     const { body } = await request(`/api/posts/${encodeURIComponent(id)}/publish`, jsonInit("POST", input));
     return parsePublish(body);
   },
+  async publishRevision(id, input) {
+    const { body } = await request(
+      `/api/posts/${encodeURIComponent(id)}/revision/publish`,
+      jsonInit("POST", input),
+    );
+    return parsePublish(body);
+  },
   async unpublishPost(id, input) {
     const { body } = await request(`/api/posts/${encodeURIComponent(id)}/unpublish`, jsonInit("POST", input));
     return parseUnpublish(body);
   },
   async archivePost(id, input) {
-    await request(`/api/posts/${encodeURIComponent(id)}`, jsonInit("DELETE", input));
+    await request(`/api/posts/${encodeURIComponent(id)}/archive`, jsonInit("POST", input));
   },
 };
 
