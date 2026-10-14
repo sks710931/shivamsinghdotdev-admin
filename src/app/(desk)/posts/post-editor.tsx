@@ -236,7 +236,8 @@ export function PostEditor({
   const [initialBody] = useState(starting.body);
   const [slugTouched, setSlugTouched] = useState(mode === "edit");
   const [pending, setPending] = useState(false);
-  const saveBlocked = false;
+  const [saveBlocked, setSaveBlocked] = useState(false);
+  const [reloadPostId, setReloadPostId] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(initialNotice);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [conflict, setConflict] = useState<ApiError | null>(null);
@@ -404,7 +405,14 @@ export function PostEditor({
             postUpdatedAt = fetched.updatedAt;
             postAuthorName = fetched.authorName;
           } catch {
-            createdVersion = "";
+            setSaveBlocked(true);
+            setReloadPostId(createdId);
+            setFields((current) => ({ ...current, slug: createdSlug }));
+            setSavedFields((current) => ({ ...current, slug: createdSlug }));
+            setSavedLabel(null);
+            setSlugTouched(true);
+            recovery.clear();
+            throw new LocalInvalid();
           }
         } else {
           throw error;
@@ -518,7 +526,7 @@ export function PostEditor({
   }
 
   async function run(action: () => Promise<void>, fallback: string) {
-    if (pending || saveBlocked) {
+    if (pending) {
       return;
     }
     setPending(true);
@@ -550,6 +558,9 @@ export function PostEditor({
   }
 
   function publish(force: boolean) {
+    if (saveBlocked) {
+      return;
+    }
     void run(async () => {
       // A draft publish writes the live row. A set-aside revision stays off this
       // request; a live post with a pending revision uses publishRevision.
@@ -595,6 +606,9 @@ export function PostEditor({
   }
 
   function unpublish() {
+    if (saveBlocked) {
+      return;
+    }
     void run(async () => {
       const model = dirty || !post ? await persist({ navigate: false }) : { post, revision };
       const result = await getPostsApi().unpublishPost(model.post.id, { version: model.post.version });
@@ -605,6 +619,9 @@ export function PostEditor({
   }
 
   function archive() {
+    if (saveBlocked) {
+      return;
+    }
     void run(async () => {
       if (!post) {
         setBanner("Save the post before archiving it.");
@@ -623,6 +640,9 @@ export function PostEditor({
   }
 
   function discard() {
+    if (saveBlocked) {
+      return;
+    }
     void run(async () => {
       if (!post?.pendingRevision || !revision) {
         return;
@@ -633,16 +653,24 @@ export function PostEditor({
   }
 
   async function reload() {
-    if (!post) {
+    const targetId = post?.id ?? reloadPostId;
+    if (!targetId) {
       return;
     }
     await run(async () => {
-      const fresh = await getPostsApi().getPost(post.id);
-      const nextRevision = fresh.pendingRevision ? await getPostsApi().getRevision(post.id) : null;
+      const fresh = await getPostsApi().getPost(targetId);
+      const nextRevision = fresh.pendingRevision ? await getPostsApi().getRevision(targetId) : null;
       applyLoaded(fresh, nextRevision);
+      setReloadPostId(null);
+      setSaveBlocked(false);
       setConflict(null);
       setRevisionStale(null);
       setFieldErrors({});
+      setSavedLabel(formatSavedIst(fresh.updatedAt));
+      if (mode === "create") {
+        sessionStorage.setItem(`desk-post-saved:${fresh.id}`, fresh.updatedAt);
+        router.replace(`/posts/${fresh.id}`);
+      }
     }, "The post could not be reloaded.");
   }
 
@@ -778,6 +806,22 @@ export function PostEditor({
         <p className="rounded-lg border border-line bg-panel px-3 py-2 text-sm text-mist">
           This post is archived. The URL slug stays reserved and it is not on the public site.
         </p>
+      ) : null}
+      {reloadPostId ? (
+        <div
+          role="status"
+          aria-label="Saved. Reload to continue editing."
+          className="rounded-lg border border-accent/30 bg-accent/10 px-4 py-3 text-sm text-paper"
+        >
+          <p>Saved. Reload to continue editing.</p>
+          <button
+            type="button"
+            onClick={() => void reload()}
+            className="mt-3 inline-flex h-9 items-center rounded-lg border border-line px-3 text-sm text-paper transition-colors hover:border-paper/30"
+          >
+            Reload
+          </button>
+        </div>
       ) : null}
       {banner ? (
         <p role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
@@ -1007,7 +1051,11 @@ export function PostEditor({
                 canUpdate={actions.updateLive}
                 onSave={save}
                 saveDisabled={saveBlocked}
-                onPublish={() => setConfirm("publish")}
+                onPublish={() => {
+                  if (!saveBlocked) {
+                    setConfirm("publish");
+                  }
+                }}
                 onUpdate={askUpdate}
                 onUnpublish={() => setConfirm("unpublish")}
                 onArchive={() => setConfirm("archive")}
@@ -1131,7 +1179,11 @@ export function PostEditor({
           canUpdate={actions.updateLive}
           onSave={save}
           saveDisabled={saveBlocked}
-          onPublish={() => setConfirm("publish")}
+          onPublish={() => {
+            if (!saveBlocked) {
+              setConfirm("publish");
+            }
+          }}
           onUpdate={askUpdate}
           onUnpublish={() => setConfirm("unpublish")}
           onArchive={() => setConfirm("archive")}
