@@ -86,9 +86,9 @@ function ensureGuestPassword(): string {
   return generated;
 }
 
-function writeTestOtherPostId(postId: string): void {
+function writeEnvVar(key: string, value: string): void {
   const path = resolve(process.cwd(), ".env.local");
-  const assignment = `TEST_OTHER_POST_ID=${postId}`;
+  const assignment = `${key}=${value}`;
   let text = "";
   try {
     text = readFileSync(path, "utf8");
@@ -99,8 +99,9 @@ function writeTestOtherPostId(postId: string): void {
     }
   }
 
-  if (/^TEST_OTHER_POST_ID=.*$/m.test(text)) {
-    const next = text.replace(/^TEST_OTHER_POST_ID=.*$/gm, assignment);
+  const pattern = new RegExp(`^${key}=.*$`, "m");
+  if (pattern.test(text)) {
+    const next = text.replace(new RegExp(`^${key}=.*$`, "gm"), assignment);
     writeFileSync(path, next.endsWith("\n") ? next : `${next}\n`, "utf8");
   } else {
     let prefix = "";
@@ -110,8 +111,20 @@ function writeTestOtherPostId(postId: string): void {
     appendFileSync(path, `${prefix}${assignment}\n`, "utf8");
   }
 
-  process.env.TEST_OTHER_POST_ID = postId;
+  process.env[key] = value;
+}
+
+function writeTestOtherPostId(postId: string): void {
+  writeEnvVar("TEST_OTHER_POST_ID", postId);
   console.log("Wrote TEST_OTHER_POST_ID to .env.local.");
+}
+
+function writeTestAdminId(adminId: string): void {
+  writeEnvVar("TEST_ADMIN_ID", adminId);
+}
+
+function writeTestGuestId(guestId: string): void {
+  writeEnvVar("TEST_GUEST_ID", guestId);
 }
 
 loadEnvFile(".env", false);
@@ -168,6 +181,13 @@ try {
 
   console.log("Upserted guest user guest@localhost.test.");
 
+  const guestUser = await pool
+    .request()
+    .input("email", sql.NVarChar(320), GUEST_EMAIL)
+    .query("SELECT Id FROM dbo.AdminUser WHERE Email = @email");
+  const guestId = String(guestUser.recordset[0].Id);
+
+  let adminId: string | undefined;
   const adminEmail = process.env.ADMIN_EMAIL?.trim() ?? "";
   const adminPassword = process.env.ADMIN_PASSWORD ?? "";
   if (adminEmail.length === 0) {
@@ -206,6 +226,14 @@ try {
     }
 
     console.log(`Upserted admin user ${adminEmail}.`);
+
+    const adminUser = await pool
+      .request()
+      .input("email", sql.NVarChar(320), adminEmail)
+      .query("SELECT Id FROM dbo.AdminUser WHERE Email = @email");
+    if (adminUser.recordset.length > 0) {
+      adminId = String(adminUser.recordset[0].Id);
+    }
   }
 
   const otherAuthorPasswordHash = await hashPassword(randomBytes(24).toString("base64url"));
@@ -258,8 +286,19 @@ try {
     .query("SELECT Id FROM dbo.BlogPost WHERE Slug=@slug");
   const id = otherPost.recordset[0].Id;
 
-  console.log("TEST_OTHER_POST_ID=" + id);
   writeTestOtherPostId(String(id));
+  if (!adminId) {
+    const fallbackAdmin = await pool
+      .request()
+      .query("SELECT TOP 1 Id FROM dbo.AdminUser WHERE Role = 'admin' AND Disabled = 0");
+    if (fallbackAdmin.recordset.length > 0) {
+      adminId = String(fallbackAdmin.recordset[0].Id);
+    }
+  }
+  if (adminId) {
+    writeTestAdminId(adminId);
+  }
+  writeTestGuestId(guestId);
 } catch (error: unknown) {
   console.error(describeError(error));
   process.exitCode = 1;
