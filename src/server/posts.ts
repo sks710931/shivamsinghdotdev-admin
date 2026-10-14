@@ -256,9 +256,29 @@ export async function createPost(
 
   const row = result.recordset[0];
   const rv = row ? field(row, "rowVersion") : undefined;
-  const version = encodeRowVersion(rv);
-
-  return { id, slug, version };
+  try {
+    const version = encodeRowVersion(rv);
+    return { id, slug, version };
+  } catch (encodeError) {
+    console.error(
+      "createPost: failed to encode inserted rowVersion; falling back to getPostById",
+      encodeError instanceof Error ? encodeError.name : "error",
+    );
+    try {
+      const post = await getPostById(actor, id);
+      if (post?.version) {
+        return { id, slug, version: post.version };
+      }
+    } catch {
+      // Re-fetch failed as well
+    }
+    throw new AuthError(
+      "Draft was saved, but its version could not be retrieved.",
+      500,
+      "post_saved_version_failed",
+      { id, slug },
+    );
+  }
 }
 export type BlogPostDetail = {
   id: string; title: string; slug: string; summary: string; tags: string; seoKeywords: string; seoTitle: string;
