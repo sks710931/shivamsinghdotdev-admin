@@ -1,7 +1,7 @@
 import "server-only";
 
 import { query, sql } from "@/server/db";
-import type { PostActor } from "@/server/posts";
+import { encodeRowVersion, type PostActor } from "@/server/posts";
 
 export type PendingRevision = {
   id: string; postId: string; authorId: string; title: string; slug: string; summary: string; tags: string;
@@ -10,7 +10,6 @@ export type PendingRevision = {
 };
 
 const iso = (v: unknown) => (v instanceof Date ? v : new Date(String(v ?? ""))).toISOString();
-const b64 = (v: unknown) => (Buffer.isBuffer(v) ? v.toString("base64") : "");
 
 /** GET /api/posts/[id]/revision. Contract v1.1: `version` is the revision's RowVersion. Guests only see their own posts. */
 export async function getPendingRevision(actor: PostActor, postId: string): Promise<PendingRevision | null> {
@@ -32,7 +31,7 @@ export async function getPendingRevision(actor: PostActor, postId: string): Prom
     id: String(r.Id), postId: String(r.PostId), authorId: String(r.AuthorId),
     title: String(r.Title ?? ""), slug: String(r.Slug ?? ""), summary: String(r.Summary ?? ""),
     tags: String(r.Tags ?? ""), seoTitle: String(r.SeoTitle ?? ""), seoKeywords: String(r.SeoKeywords ?? ""),
-    bodyHtml: String(r.BodyHtml ?? ""), baseVersion: b64(r.BaseVersion), version: b64(r.RowVersion),
+    bodyHtml: String(r.BodyHtml ?? ""), baseVersion: encodeRowVersion(r.BaseVersion), version: encodeRowVersion(r.RowVersion),
     createdAt: iso(r.CreatedAt), updatedAt: iso(r.UpdatedAt),
   };
 }

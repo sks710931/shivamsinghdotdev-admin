@@ -97,6 +97,13 @@ function flag(value: unknown): boolean {
   return value === true || value === 1 || value === "1";
 }
 
+export function encodeRowVersion(value: unknown): string {
+  if (Buffer.isBuffer(value) && value.length === 8) {
+    return value.toString("base64");
+  }
+  throw new Error("Unexpected RowVersion value from database");
+}
+
 export async function listPosts(actor: PostActor): Promise<BlogPostListItem[]>;
 export async function listPosts(actor: PostActor, options: ListPostsOptions): Promise<{ items: BlogPostListItem[]; total: number }>;
 export async function listPosts(
@@ -249,7 +256,7 @@ export async function createPost(
 
   const row = result.recordset[0];
   const rv = row ? field(row, "rowVersion") : undefined;
-  const version = Buffer.isBuffer(rv) ? rv.toString("base64") : Buffer.from(String(rv ?? "")).toString("base64");
+  const version = encodeRowVersion(rv);
 
   return { id, slug, version };
 }
@@ -294,7 +301,7 @@ export async function getPostById(actor: PostActor, id: string): Promise<BlogPos
     authorId,
     authorName: String(field(row, "authorName") ?? ""),
     hasPendingRevision: flag(field(row, "hasPendingRevision")),
-    version: Buffer.isBuffer(rv) ? rv.toString("base64") : Buffer.from(String(rv ?? "")).toString("base64"),
+    version: encodeRowVersion(rv),
     updatedAt: timestamp(field(row, "updatedAt")),
     publishedAt: timestampOrNull(field(row, "publishedAt")),
   };
