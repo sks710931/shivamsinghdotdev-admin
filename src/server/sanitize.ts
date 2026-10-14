@@ -1,5 +1,21 @@
 import sanitize from "sanitize-html";
 
+import {
+  ALLOWED_ATTRIBUTES,
+  ALLOWED_SCHEMES,
+  ALLOWED_SCHEMES_BY_TAG,
+  ALLOWED_TAGS,
+  NON_TEXT_TAGS,
+} from "@/lib/sanitize-schema";
+
+const SERVER_ALLOWED_ATTRIBUTES: Record<string, string[]> = Object.fromEntries(
+  Object.entries(ALLOWED_ATTRIBUTES).map(([tag, attrs]) => [tag, [...attrs]])
+);
+
+const SERVER_ALLOWED_SCHEMES_BY_TAG: Record<string, string[]> = Object.fromEntries(
+  Object.entries(ALLOWED_SCHEMES_BY_TAG).map(([tag, schemes]) => [tag, schemes ? [...schemes] : []])
+);
+
 const LANGUAGE = (c: string) => /^language-[a-z0-9+#-]+$/i.test(c);
 const TASK_LIST = (c: string) => c === "task-list";
 
@@ -26,27 +42,14 @@ export function sanitizeHtml(html: string): string {
   const stack: { tag: string; taskList: boolean }[] = [];
 
   return sanitize(html ?? "", {
-    allowedTags: [
-      "p", "h2", "h3", "h4", "strong", "em", "s", "code", "pre", "blockquote", "ul", "ol", "li",
-      "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption", "hr", "br", "a", "img",
-      "figure", "figcaption", "mark", "input",
-    ],
-    allowedAttributes: {
-      a: ["href", "title", "rel"],
-      img: ["src", "alt", "title", "width", "height", "data-drop"],
-      pre: ["class"],
-      code: ["class"],
-      ul: ["class"],
-      th: ["colspan", "rowspan", "scope"],
-      td: ["colspan", "rowspan"],
-      input: ["type", "checked", "disabled", "data-drop"],
-    },
-    allowedSchemes: ["http", "https", "mailto"],
-    allowedSchemesByTag: { a: ["http", "https", "mailto"], img: ["https"] },
+    allowedTags: [...ALLOWED_TAGS],
+    allowedAttributes: SERVER_ALLOWED_ATTRIBUTES,
+    allowedSchemes: [...ALLOWED_SCHEMES],
+    allowedSchemesByTag: SERVER_ALLOWED_SCHEMES_BY_TAG,
     allowedSchemesAppliedToAttributes: ["href", "src"],
     allowProtocolRelative: false,
     disallowedTagsMode: "discard",
-    nonTextTags: ["script", "style", "textarea", "option", "noscript", "iframe", "svg", "math", "object", "embed", "form", "template"],
+    nonTextTags: [...NON_TEXT_TAGS],
     onOpenTag: (name, attribs) => {
       stack.push({ tag: name, taskList: name === "ul" && (attribs.class ?? "").split(/\s+/).includes("task-list") });
     },

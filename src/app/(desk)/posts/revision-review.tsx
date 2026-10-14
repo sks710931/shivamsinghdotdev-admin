@@ -2,6 +2,7 @@
 
 import { normalizeEditorHtml } from "@/lib/editor-html";
 import { formatIstDateTime } from "@/lib/format-ist";
+import { safeHtml } from "@/lib/safe-html";
 import type { UserRole } from "@/lib/directory";
 import type { PostStatus } from "@/lib/posts-client";
 
@@ -87,7 +88,7 @@ export function RevisionReview({
           {liveSummary ? <p className="mt-1 text-sm text-mist">{liveSummary}</p> : null}
           <div
             className="blog-preview-body mt-3 text-sm text-paper"
-            dangerouslySetInnerHTML={{ __html: normalizeEditorHtml(liveHtml) }}
+            dangerouslySetInnerHTML={{ __html: safeHtml(normalizeEditorHtml(liveHtml)) }}
           />
         </article>
         <article className="rounded-xl border border-line bg-ink p-4">
@@ -96,7 +97,7 @@ export function RevisionReview({
           {pendingSummary ? <p className="mt-1 text-sm text-mist">{pendingSummary}</p> : null}
           <div
             className="blog-preview-body mt-3 text-sm text-paper"
-            dangerouslySetInnerHTML={{ __html: normalizeEditorHtml(pendingHtml) }}
+            dangerouslySetInnerHTML={{ __html: safeHtml(normalizeEditorHtml(pendingHtml)) }}
           />
         </article>
       </div>
