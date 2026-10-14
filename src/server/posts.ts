@@ -7,6 +7,7 @@ import type { AdminUser } from "@/server/auth";
 export type PostActor = Pick<AdminUser, "id" | "role">;
 import { AuthError } from "@/server/auth-error";
 import { sql, query } from "@/server/db";
+import { sanitizeHtml } from "@/server/sanitize";
 
 export type PostStatus = "draft" | "published";
 
@@ -256,7 +257,7 @@ export async function listPosts(
 }
 
 export async function createPost(
-  authorId: string,
+  actor: PostActor,
   input: unknown,
 ): Promise<{ id: string; slug: string }> {
   if (!input || typeof input !== "object") {
@@ -272,8 +273,11 @@ export async function createPost(
   const tags = text(body.tags, "Tags", 500, false);
   const seoKeywords = text(body.seoKeywords, "SEO keywords", 500, false);
   const seoTitle = text(body.seoTitle, "SEO title", 200, false);
-  const html = text(body.bodyHtml, "Body", 200_000, true);
-  const status: PostStatus = body.status === "published" ? "published" : "draft";
+  const html = sanitizeHtml(text(body.bodyHtml, "Body", 200_000, true));
+  if (html.trim().length === 0) throw new AuthError("Body is required.", 400, "validation");
+  // Guests can never publish on create (Sentinel P1).
+  const status: PostStatus = actor.role === "admin" && body.status === "published" ? "published" : "draft";
+  const authorId = actor.id;
 
   await ensurePostSchema();
   const id = randomUUID();
