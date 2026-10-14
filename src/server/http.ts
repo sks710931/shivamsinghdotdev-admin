@@ -2,23 +2,44 @@ import "server-only";
 
 import { AuthError } from "@/server/auth-error";
 
+function blocked(): never {
+  throw new AuthError("Cross-site request blocked.", 403, "forbidden");
+}
+
+/**
+ * Same-origin check for state-changing requests.
+ * With APP_ORIGIN set (required in production), `Origin` must equal it exactly; proxy headers are ignored.
+ * Without it (local dev only), `Origin` must match the `Host` header. X-Forwarded-Host is never trusted.
+ */
 export function assertSameOrigin(request: Request): void {
   const origin = request.headers.get("origin");
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-  if (!origin || !host) {
-    throw new AuthError("Cross-site request blocked.", 403);
-  }
+  if (!origin) blocked();
 
-  let originHost: string;
+  let parsed: URL;
   try {
-    originHost = new URL(origin).host;
+    parsed = new URL(origin);
   } catch {
-    throw new AuthError("Cross-site request blocked.", 403);
+    blocked();
   }
 
-  if (originHost !== host) {
-    throw new AuthError("Cross-site request blocked.", 403);
+  const configured = process.env.APP_ORIGIN?.trim();
+  if (configured) {
+    let expected: string;
+    try {
+      expected = new URL(configured).origin;
+    } catch {
+      blocked();
+    }
+    if (parsed.origin !== expected) blocked();
+    return;
   }
+
+  if (process.env.NODE_ENV === "production") {
+    console.error("APP_ORIGIN is not set; blocking state-changing requests.");
+    blocked();
+  }
+  const host = request.headers.get("host");
+  if (!host || parsed.host !== host) blocked();
 }
 
 export function clientAddress(request: Request): string {
