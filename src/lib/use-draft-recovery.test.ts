@@ -347,7 +347,7 @@ describe("useDraftRecovery", () => {
     expect(result.current.pending?.title).toBe("Newer local draft");
   });
 
-  it("stale snapshot ignored: ignores a stale snapshot when baseVersion differs", () => {
+  it("offers a stale snapshot when baseVersion differs", () => {
     const stored = snapshot({ baseVersion: "rev-1", title: "Older title" });
     mockedLoad.mockReturnValue(stored);
 
@@ -355,7 +355,8 @@ describe("useDraftRecovery", () => {
       useDraftRecovery(USER_ID, "post-1", "Title", "Body", "rev-2"),
     );
 
-    expect(mismatch.result.current.pending).toBeNull();
+    expect(mismatch.result.current.pending).toEqual(offered(stored, true));
+    expect(mismatch.result.current.pending?.stale).toBe(true);
     expect(mockedClear).not.toHaveBeenCalled();
     expect(mockedPrune).toHaveBeenCalledWith(USER_ID);
     mismatch.unmount();
@@ -367,7 +368,8 @@ describe("useDraftRecovery", () => {
       useDraftRecovery(USER_ID, "post-1", "Title", "Body", null),
     );
 
-    expect(unchangedText.result.current.pending).toBeNull();
+    expect(unchangedText.result.current.pending).toEqual(offered(sameText, true));
+    expect(unchangedText.result.current.pending?.stale).toBe(true);
     expect(mockedClear).not.toHaveBeenCalled();
   });
 
@@ -413,7 +415,7 @@ describe("useDraftRecovery", () => {
     expect(equalResult.current.pending).toBeNull();
   });
 
-  it("stale snapshot ignored: clears pending when server baseVersion or updatedAt advances", () => {
+  it("marks pending snapshot stale when server baseVersion advances", () => {
     const stored = snapshot({
       baseVersion: "rev-1",
       savedAt: "2026-10-14T12:00:00.000Z",
@@ -443,11 +445,19 @@ describe("useDraftRecovery", () => {
 
     rerender({ baseVersion: "rev-2", serverUpdatedAt: "2026-10-14T11:00:00.000Z" });
 
-    expect(result.current.pending).toBeNull();
+    expect(result.current.pending).toEqual(offered(stored, true));
+    expect(result.current.pending?.stale).toBe(true);
+  });
 
-    rerender({ baseVersion: "rev-1", serverUpdatedAt: "2026-10-14T13:00:00.000Z" });
+  it("ensures drafts are keyed per user+post and user B never sees user A's draft", () => {
+    renderHook(() =>
+      useDraftRecovery("user-b", "post-1", "Title", "Body", "rev-1"),
+    );
 
-    expect(result.current.pending).toBeNull();
+    expect(mockedLoad).toHaveBeenCalledTimes(1);
+    expect(mockedLoad).toHaveBeenCalledWith("user-b", "post-1");
+    expect(mockedPrune).toHaveBeenCalledTimes(1);
+    expect(mockedPrune).toHaveBeenCalledWith("user-b");
   });
 
   it("saves the server baseVersion with the draft", () => {

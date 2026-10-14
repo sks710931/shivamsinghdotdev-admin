@@ -71,6 +71,25 @@ describe("draft snapshot storage", () => {
     expect(loadSnapshot("user-2", "post-1")).toEqual(other);
   });
 
+  it("ensures drafts are keyed per user+post so user B never sees user A's draft", () => {
+    const userADraft: DraftSnapshot = {
+      userId: "user-a",
+      postId: "post-shared-123",
+      title: "Confidential draft by User A",
+      body: "<p>Work in progress by user A</p>",
+      savedAt: new Date().toISOString(),
+      baseVersion: "1",
+    };
+    expect(saveSnapshot(userADraft)).toBe(true);
+
+    // User B attempting to load draft for the same post gets null
+    expect(loadSnapshot("user-b", "post-shared-123")).toBeNull();
+
+    // When User B prunes snapshots, User A's snapshot is removed from shared browser storage
+    pruneSnapshots("user-b");
+    expect(localStorage.getItem(keyFor("user-a", "post-shared-123"))).toBeNull();
+  });
+
   it("returns null when nothing is stored", () => {
     expect(loadSnapshot("user-1", "missing")).toBeNull();
   });

@@ -92,6 +92,7 @@ export type CreatePostInput = {
 export type CreatePostResult = {
   id: string;
   slug: string;
+  version: string;
 };
 
 /**
@@ -425,14 +426,15 @@ export function parseRevisionDetail(body: unknown): RevisionDetail {
 }
 
 function parseCreated(body: unknown): CreatePostResult {
-  if (!isRecord(body) || typeof body.id !== "string" || typeof body.slug !== "string") {
+  const version = isRecord(body) ? readString(body.version) : undefined;
+  if (!isRecord(body) || typeof body.id !== "string" || typeof body.slug !== "string" || !version) {
     throw new ApiError({
       status: 500,
       error: "The server returned an unexpected post.",
       code: "unknown",
     });
   }
-  return { id: body.id, slug: body.slug };
+  return { id: body.id, slug: body.slug, version };
 }
 
 function parsePatch(body: unknown): PatchPostResult {

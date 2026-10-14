@@ -29,10 +29,11 @@ export function useDraftRecovery(
   baseVersion: string | null,
   serverUpdatedAt: string | null = null,
 ): UseDraftRecoveryResult {
-  // A stored draft is pending only when it is newer than the server copy
-  // (snapshot.savedAt > serverUpdatedAt, and baseVersion matches) and its
-  // text differs from the opened title and body. Stale snapshots are ignored
-  // to avoid overwriting newer server content.
+  // A stored draft is pending when its text still differs from the title and body
+  // this post was opened with, or when it was saved against another server version.
+  // Later keystrokes must not move that baseline. A version mismatch stays pending
+  // and is marked stale so restoring and saving will send baseVersion and prompt a
+  // 409 conflict screen instead of overwriting newer changes.
   const pendingFrom = (
     snapshot: DraftSnapshot | null,
     openedTitle: string,
@@ -43,18 +44,16 @@ export function useDraftRecovery(
     if (snapshot === null) {
       return null;
     }
-    if (snapshot.baseVersion !== openedBaseVersion) {
-      return null;
-    }
-    if (openedServerUpdatedAt) {
+    const stale = snapshot.baseVersion !== openedBaseVersion;
+    if (openedServerUpdatedAt && !stale) {
       const snapshotTime = Date.parse(snapshot.savedAt);
       const serverTime = Date.parse(openedServerUpdatedAt);
       if (!Number.isNaN(snapshotTime) && !Number.isNaN(serverTime) && snapshotTime <= serverTime) {
         return null;
       }
     }
-    if (snapshot.title !== openedTitle || snapshot.body !== openedBody) {
-      return { ...snapshot, stale: false };
+    if (stale || snapshot.title !== openedTitle || snapshot.body !== openedBody) {
+      return { ...snapshot, stale };
     }
     return null;
   };

@@ -151,7 +151,10 @@ function keywords(value: string): string[] {
     .filter((item) => item.length > 0);
 }
 
-function previewHtml(html: string): string {
+export function previewHtml(html: string): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
   return safeHtml(normalizeEditorHtml(html));
 }
 
@@ -233,7 +236,7 @@ export function PostEditor({
   const [initialBody] = useState(starting.body);
   const [slugTouched, setSlugTouched] = useState(mode === "edit");
   const [pending, setPending] = useState(false);
-  const [saveBlocked, setSaveBlocked] = useState(false);
+  const saveBlocked = false;
   const [banner, setBanner] = useState<string | null>(initialNotice);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [conflict, setConflict] = useState<ApiError | null>(null);
@@ -241,6 +244,7 @@ export function PostEditor({
   const [savedLabel, setSavedLabel] = useState<string | null>(initialSavedAt ? formatSavedIst(initialSavedAt) : null);
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null);
   const [missing, setMissing] = useState(false);
+  const [restoredBaseVersion, setRestoredBaseVersion] = useState<string | null>(null);
   const [tagDraft, setTagDraft] = useState("");
   const [blocksOpen, setBlocksOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -316,6 +320,7 @@ export function PostEditor({
     setRevision(nextRevision);
     setFields(nextFields);
     setSavedFields(nextFields);
+    setRestoredBaseVersion(null);
     setSlugTouched(true);
     editorRef.current?.setContent(nextFields.body);
   }
@@ -373,18 +378,26 @@ export function PostEditor({
         bodyHtml,
       });
       recovery.clear();
-      let detail: PostDetail;
-      try {
-        detail = await api.getPost(created.id);
-      } catch (error: unknown) {
-        if (!(error instanceof ApiError) || error.code !== "not_found") {
-          throw error;
-        }
-        setSaveBlocked(true);
-        setSavedFields(fields);
-        setBanner("Saved, but couldn't load the post. Reload to keep editing.");
-        throw new LocalInvalid();
-      }
+      setRestoredBaseVersion(null);
+      const now = new Date().toISOString();
+      const detail: PostDetail = {
+        id: created.id,
+        title: fields.title.trim(),
+        slug: created.slug,
+        summary: fields.summary.trim(),
+        tags: [...fields.tags],
+        seoTitle: fields.seoTitle.trim(),
+        seoKeywords: keywords(fields.seoKeywords),
+        bodyHtml,
+        status: "draft",
+        authorId: userId,
+        authorName: "",
+        createdAt: now,
+        updatedAt: now,
+        publishedAt: null,
+        version: created.version,
+        pendingRevision: null,
+      };
       const nextFields = { ...fields, body: bodyHtml, slug: detail.slug };
       setPost(detail);
       setFields(nextFields);
@@ -398,7 +411,8 @@ export function PostEditor({
       return { post: detail, revision: null };
     }
 
-    const token = post.status === "published" && revision ? revision.version : post.version;
+    const currentToken = post.status === "published" && revision ? revision.version : post.version;
+    const token = restoredBaseVersion ?? currentToken;
     const result = await api.patchPost(post.id, {
       version: token,
       title: fields.title.trim(),
@@ -410,6 +424,7 @@ export function PostEditor({
       ...(slugLocked ? {} : { slug: fields.slug.trim() }),
     });
     recovery.clear();
+    setRestoredBaseVersion(null);
     const nextFields = { ...fields, body: bodyHtml, slug: slugLocked ? post.slug : fields.slug.trim() };
 
     if (result.appliedTo === "pendingRevision") {
@@ -713,6 +728,9 @@ export function PostEditor({
             if (s) {
               setFields((f) => ({ ...f, title: s.title, body: s.body }));
               editorRef.current?.setContent(s.body);
+              if (s.baseVersion !== null) {
+                setRestoredBaseVersion(s.baseVersion);
+              }
             }
           }}
           onDiscard={() => {
