@@ -133,4 +133,25 @@ record "guest GET /api/posts" "200" "$(http_code -b "$guest_jar" "${BASE}/api/po
 record "guest GET /api/posts/00000000-0000-0000-0000-000000000000" "404" \
   "$(http_code -b "$guest_jar" "${BASE}/api/posts/00000000-0000-0000-0000-000000000000")"
 
+other_post_id=""
+if other_post_id="$(read_env TEST_OTHER_POST_ID)" && [[ -n "$other_post_id" ]]; then
+  record "guest GET /api/posts/${other_post_id}" "404" \
+    "$(http_code -b "$guest_jar" "${BASE}/api/posts/${other_post_id}")"
+  record "admin GET /api/posts/${other_post_id}" "200" \
+    "$(http_code -b "$admin_jar" "${BASE}/api/posts/${other_post_id}")"
+  record "guest GET /api/posts/${other_post_id}/revision" "404" \
+    "$(http_code -b "$guest_jar" "${BASE}/api/posts/${other_post_id}/revision")"
+  # A draft has no pending revision, so admin sees the post but not a revision.
+  record "admin GET /api/posts/${other_post_id}/revision" "404" \
+    "$(http_code -b "$admin_jar" "${BASE}/api/posts/${other_post_id}/revision")"
+  record "unauthenticated GET /api/posts/${other_post_id}" "401" \
+    "$(http_code "${BASE}/api/posts/${other_post_id}")"
+else
+  printf 'SKIP guest GET /api/posts/$TEST_OTHER_POST_ID (TEST_OTHER_POST_ID is not set)\n'
+  printf 'SKIP admin GET /api/posts/$TEST_OTHER_POST_ID (TEST_OTHER_POST_ID is not set)\n'
+  printf 'SKIP guest GET /api/posts/$TEST_OTHER_POST_ID/revision (TEST_OTHER_POST_ID is not set)\n'
+  printf 'SKIP admin GET /api/posts/$TEST_OTHER_POST_ID/revision (TEST_OTHER_POST_ID is not set)\n'
+  printf 'SKIP unauthenticated GET /api/posts/$TEST_OTHER_POST_ID (TEST_OTHER_POST_ID is not set)\n'
+fi
+
 exit "$failed"
