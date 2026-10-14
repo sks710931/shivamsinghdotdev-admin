@@ -13,3 +13,13 @@ Autosave (slice 2) must never push partial text to the public site. It also leav
 
 ## Revisit when
 Multiple concurrent pending revisions per post are needed.
+
+## Addendum (2026-10-14): version semantics
+
+Contract v1.1 unchanged.
+
+- `GET /api/posts/[id]` always returns the live post with a `pendingRevision` indicator.
+- `GET /api/posts/[id]/revision` returns the pending revision fields and `version` = `PostRevision.RowVersion`.
+- `PATCH` on a live post returns the revision's new `version`.
+- Clients send back the last `version` received from the endpoint they edit.
+- A mismatch returns `409 stale_version`.
