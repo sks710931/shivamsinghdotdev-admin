@@ -101,8 +101,28 @@ const DEFAULT_CODES: Record<number, string> = {
   429: "rate_limited",
 };
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ROUTE_UNSAFE_CHARS_REGEX = /[^A-Za-z0-9\/_\-[\]\.:]/g;
+
+export type ApiErrorContext = {
+  route?: string;
+  postId?: string;
+};
+
+export function buildSafeTag(context?: ApiErrorContext): string {
+  const parts: string[] = [];
+  if (context?.route) {
+    parts.push(`route=${context.route.replace(ROUTE_UNSAFE_CHARS_REGEX, "_")}`);
+  }
+  if (context?.postId !== undefined) {
+    const isUuid = typeof context.postId === "string" && UUID_REGEX.test(context.postId);
+    parts.push(`postId=${isUuid ? context.postId : "invalid"}`);
+  }
+  return `[${parts.join(" ") || "api"}]`;
+}
+
 /** Maps an error to the contract response shape. */
-export function apiError(error: unknown): Response {
+export function apiError(error: unknown, context?: ApiErrorContext): Response {
   if (error instanceof AuthError) {
     return json(
       {
@@ -114,6 +134,6 @@ export function apiError(error: unknown): Response {
     );
   }
 
-  console.error("API request failed", error instanceof Error ? error.name : "error");
+  console.error("API request failed", buildSafeTag(context), error instanceof Error ? error.name : "error");
   return json({ error: "Unable to complete the request.", code: "internal" }, 500);
 }
