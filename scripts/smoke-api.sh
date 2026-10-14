@@ -1,11 +1,68 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE=${APP_URL:-http://localhost:3000}
-BASE=${BASE%/}
+# Guard: Validate base URL before any HTTP request
+validate_smoke_url() {
+  local url="$1"
+  local scheme authority remainder host port
+
+  if [[ ! "$url" =~ ^([a-zA-Z][a-zA-Z0-9+.-]*)://(.*)$ ]]; then
+    printf 'ERROR: Invalid base URL "%s". Scheme must be http or https.\n' "$url" >&2
+    exit 2
+  fi
+  scheme="${BASH_REMATCH[1],,}"
+  if [[ "$scheme" != "http" && "$scheme" != "https" ]]; then
+    printf 'ERROR: Invalid scheme "%s" in base URL "%s". Only http and https are allowed.\n' "$scheme" "$url" >&2
+    exit 2
+  fi
+
+  remainder="${BASH_REMATCH[2]}"
+  authority="${remainder%%[/?#]*}"
+
+  if [[ -z "$authority" ]]; then
+    printf 'ERROR: Empty authority in base URL "%s".\n' "$url" >&2
+    exit 2
+  fi
+
+  if [[ "$authority" == *"@"* ]]; then
+    printf 'ERROR: Userinfo (@) is not allowed in base URL authority "%s".\n' "$authority" >&2
+    exit 2
+  fi
+
+  if [[ "$authority" =~ ^(\[[^]]+\])(:(.*))?$ ]]; then
+    host="${BASH_REMATCH[1]}"
+    if [[ -n "${BASH_REMATCH[2]:-}" && -z "${BASH_REMATCH[3]:-}" ]]; then
+      printf 'ERROR: Empty port in base URL authority "%s".\n' "$authority" >&2
+      exit 2
+    fi
+    port="${BASH_REMATCH[3]:-}"
+  elif [[ "$authority" =~ ^([^:]+)(:(.*))?$ ]]; then
+    host="${BASH_REMATCH[1]}"
+    if [[ -n "${BASH_REMATCH[2]:-}" && -z "${BASH_REMATCH[3]:-}" ]]; then
+      printf 'ERROR: Empty port in base URL authority "%s".\n' "$authority" >&2
+      exit 2
+    fi
+    port="${BASH_REMATCH[3]:-}"
+  else
+    printf 'ERROR: Invalid authority "%s" in base URL "%s".\n' "$authority" "$url" >&2
+    exit 2
+  fi
+
+  if [[ -n "$port" ]]; then
+    if [[ ! "$port" =~ ^[0-9]+$ ]] || (( 10#$port < 1 || 10#$port > 65535 )); then
+      printf 'ERROR: Invalid port "%s" in base URL "%s". Port must be an integer between 1 and 65535.\n' "$port" "$url" >&2
+      exit 2
+    fi
+  fi
+
+  local host_lower="${host,,}"
+  if [[ "$host_lower" != "localhost" && "$host" != "127.0.0.1" && "$host" != "[::1]" ]]; then
+    printf 'ERROR: Untrusted host "%s" in base URL "%s". Only localhost, 127.0.0.1, and [::1] are allowed.\n' "$host" "$url" >&2
+    exit 2
+  fi
+}
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
 ENV_FILE="${ENV_FILE:-${ROOT}/.env.local}"
 
 read_env() {
@@ -13,6 +70,10 @@ read_env() {
   local line trimmed keypart raw value first lastc
   local found=0
   local last=""
+
+  if [[ ! -f "$ENV_FILE" ]]; then
+    return 1
+  fi
 
   while IFS= read -r line || [[ -n "${line:-}" ]]; do
     line="${line%$'\r'}"
@@ -52,6 +113,24 @@ read_env() {
   fi
   printf '%s' "$last"
 }
+
+BASE="${APP_URL:-}"
+if [[ -z "$BASE" && -f "$ENV_FILE" ]]; then
+  BASE="$(read_env APP_URL || true)"
+fi
+BASE="${BASE:-http://localhost:3000}"
+BASE="${BASE%/}"
+
+validate_smoke_url "$BASE"
+
+for arg in "$@"; do
+  if [[ "$arg" == "--check-host-only" ]]; then
+    printf 'OK: Base URL host guard passed for %s\n' "$BASE"
+    exit 0
+  fi
+done
+
+cd "$ROOT"
 
 assign_required() {
   local key="$1"
