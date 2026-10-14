@@ -368,22 +368,56 @@ export function PostEditor({
     setRevisionStale(null);
 
     if (!post) {
-      const created = await api.createPost({
-        title: fields.title.trim(),
-        slug: fields.slug.trim(),
-        summary: fields.summary.trim(),
-        tags: fields.tags.join(", "),
-        seoKeywords: fields.seoKeywords.trim(),
-        seoTitle: fields.seoTitle.trim(),
-        bodyHtml,
-      });
+      let createdId: string;
+      let createdSlug: string;
+      let createdVersion: string;
+      let postCreatedAt: string | undefined;
+      let postUpdatedAt: string | undefined;
+      let postAuthorName: string | undefined;
+
+      try {
+        const created = await api.createPost({
+          title: fields.title.trim(),
+          slug: fields.slug.trim(),
+          summary: fields.summary.trim(),
+          tags: fields.tags.join(", "),
+          seoKeywords: fields.seoKeywords.trim(),
+          seoTitle: fields.seoTitle.trim(),
+          bodyHtml,
+        });
+        createdId = created.id;
+        createdSlug = created.slug;
+        createdVersion = created.version;
+      } catch (error: unknown) {
+        if (
+          error instanceof ApiError &&
+          error.code === "post_saved_version_failed" &&
+          typeof error.id === "string" &&
+          typeof error.slug === "string"
+        ) {
+          createdId = error.id;
+          createdSlug = error.slug;
+          try {
+            const fetched = await api.getPost(error.id);
+            createdVersion = fetched.version;
+            postCreatedAt = fetched.createdAt;
+            postUpdatedAt = fetched.updatedAt;
+            postAuthorName = fetched.authorName;
+          } catch {
+            createdVersion = "";
+          }
+        } else {
+          throw error;
+        }
+      }
+
       recovery.clear();
       setRestoredBaseVersion(null);
       const now = new Date().toISOString();
       const detail: PostDetail = {
-        id: created.id,
+        id: createdId,
         title: fields.title.trim(),
-        slug: created.slug,
+        slug: createdSlug,
         summary: fields.summary.trim(),
         tags: [...fields.tags],
         seoTitle: fields.seoTitle.trim(),
@@ -391,11 +425,11 @@ export function PostEditor({
         bodyHtml,
         status: "draft",
         authorId: userId,
-        authorName: "",
-        createdAt: now,
-        updatedAt: now,
+        authorName: postAuthorName ?? "",
+        createdAt: postCreatedAt ?? now,
+        updatedAt: postUpdatedAt ?? now,
         publishedAt: null,
-        version: created.version,
+        version: createdVersion,
         pendingRevision: null,
       };
       const nextFields = { ...fields, body: bodyHtml, slug: detail.slug };

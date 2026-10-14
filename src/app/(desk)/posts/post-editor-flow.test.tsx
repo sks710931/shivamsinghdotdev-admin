@@ -9,10 +9,12 @@ import {
   type PostsApi,
 } from "@/lib/posts-client";
 
+const mockRouterReplace = vi.fn();
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
     push: vi.fn(),
-    replace: vi.fn(),
+    replace: mockRouterReplace,
     refresh: vi.fn(),
     back: vi.fn(),
     forward: vi.fn(),
@@ -95,6 +97,7 @@ describe("PostEditor flows", () => {
   beforeEach(() => {
     localStorage.clear();
     sessionStorage.clear();
+    mockRouterReplace.mockClear();
   });
 
   afterEach(() => {
@@ -308,6 +311,137 @@ describe("PostEditor flows", () => {
 
       // Assert no raw img with /images/architecture.png was rendered
       expect(previewBody?.querySelector("img")).toBeNull();
+    });
+  });
+
+  describe("Item (5): Client handling for post_saved_version_failed (issue #43)", () => {
+    it("on POST create 500 with post_saved_version_failed, treats as saved, navigates by id, GETs once for version, and never retries create", async () => {
+      const savedPostId = "saved-post-uuid-43";
+      const savedPostSlug = "recovered-slug";
+      const recoveredVersion = "version-token-43";
+
+      const createPostSpy = vi.fn(async () => {
+        throw new ApiError({
+          status: 500,
+          code: "post_saved_version_failed",
+          error: "Draft was saved, but its version could not be retrieved.",
+          id: savedPostId,
+          slug: savedPostSlug,
+        });
+      });
+
+      const getPostSpy = vi.fn(async (id: string) => ({
+        ...samplePost,
+        id,
+        slug: savedPostSlug,
+        version: recoveredVersion,
+      }));
+
+      const patchPostSpy = vi.fn(async () => ({
+        version: "version-token-44",
+        updatedAt: "2026-10-14T11:00:00.000Z",
+        appliedTo: "live" as const,
+      }));
+
+      const mockApi = createMockApi({
+        createPost: createPostSpy,
+        getPost: getPostSpy,
+        patchPost: patchPostSpy,
+      });
+      setPostsApiForTesting(mockApi);
+
+      render(<PostEditor mode="create" role="admin" userId="user-1" />);
+
+      // Fill in required fields
+      const titleInput = screen.getByPlaceholderText("Write your headline…");
+      fireEvent.change(titleInput, { target: { value: "Recovered Post Title" } });
+
+      const slugInput = screen.getByPlaceholderText("e.g. my-awesome-post");
+      fireEvent.change(slugInput, { target: { value: "original-slug" } });
+
+      const bodyInput = screen.getByTestId("mock-tinymce-editor");
+      fireEvent.change(bodyInput, { target: { value: "<p>Recovered post body</p>" } });
+
+      // Save the draft
+      const saveBtn = screen.getAllByRole("button", { name: "Save draft" })[0];
+      fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(createPostSpy).toHaveBeenCalledTimes(1);
+      });
+
+      // Assert GET once for version with the post id
+      await waitFor(() => {
+        expect(getPostSpy).toHaveBeenCalledTimes(1);
+      });
+      expect(getPostSpy).toHaveBeenCalledWith(savedPostId);
+
+      // Assert treated as saved:
+      // 1. Session storage marked with saved post ID
+      expect(sessionStorage.getItem(`desk-post-saved:${savedPostId}`)).toBeTruthy();
+
+      // 2. Navigated / opened by id
+      expect(mockRouterReplace).toHaveBeenCalledWith(`/posts/${savedPostId}`);
+
+      // 3. No error banner is displayed
+      expect(screen.queryByRole("alert")).toBeNull();
+
+      // 4. Never retry create: saving again performs PATCH, never calling createPost again
+      fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(patchPostSpy).toHaveBeenCalledTimes(1);
+      });
+      expect(createPostSpy).toHaveBeenCalledTimes(1);
+      expect(patchPostSpy).toHaveBeenCalledWith(
+        savedPostId,
+        expect.objectContaining({
+          version: recoveredVersion,
+        }),
+      );
+    });
+
+    it("does not treat as saved if 500 error is not post_saved_version_failed", async () => {
+      const createPostSpy = vi.fn(async () => {
+        throw new ApiError({
+          status: 500,
+          code: "unknown",
+          error: "Internal server error.",
+        });
+      });
+      const getPostSpy = vi.fn(async () => samplePost);
+
+      const mockApi = createMockApi({
+        createPost: createPostSpy,
+        getPost: getPostSpy,
+      });
+      setPostsApiForTesting(mockApi);
+
+      render(<PostEditor mode="create" role="admin" userId="user-1" />);
+
+      const titleInput = screen.getByPlaceholderText("Write your headline…");
+      fireEvent.change(titleInput, { target: { value: "Some Title" } });
+
+      const bodyInput = screen.getByTestId("mock-tinymce-editor");
+      fireEvent.change(bodyInput, { target: { value: "<p>Some body</p>" } });
+
+      const saveBtn = screen.getAllByRole("button", { name: "Save draft" })[0];
+      fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(createPostSpy).toHaveBeenCalledTimes(1);
+      });
+
+      // Did NOT call getPost
+      expect(getPostSpy).not.toHaveBeenCalled();
+
+      // Did NOT navigate
+      expect(mockRouterReplace).not.toHaveBeenCalled();
+
+      // Error banner is displayed
+      await waitFor(() => {
+        expect(screen.getByRole("alert").textContent).toContain("Internal server error.");
+      });
     });
   });
 });

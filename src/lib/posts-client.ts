@@ -160,6 +160,7 @@ export const API_ERROR_CODES = [
   "archived",
   "not_draft",
   "not_published",
+  "post_saved_version_failed",
   "unknown",
 ] as const;
 
@@ -173,6 +174,8 @@ export class ApiError extends Error {
   readonly currentVersion?: string;
   readonly updatedAt?: string;
   readonly updatedBy?: string;
+  readonly id?: string;
+  readonly slug?: string;
 
   constructor(init: {
     status: number;
@@ -182,6 +185,8 @@ export class ApiError extends Error {
     currentVersion?: string;
     updatedAt?: string;
     updatedBy?: string;
+    id?: string;
+    slug?: string;
   }) {
     super(init.error);
     this.name = "ApiError";
@@ -199,6 +204,12 @@ export class ApiError extends Error {
     }
     if (init.updatedBy) {
       this.updatedBy = init.updatedBy;
+    }
+    if (init.id) {
+      this.id = init.id;
+    }
+    if (init.slug) {
+      this.slug = init.slug;
     }
   }
 }
@@ -291,6 +302,8 @@ export function apiErrorFromResponse(response: { status: number }, body: unknown
     ...(readString(record.currentVersion) ? { currentVersion: readString(record.currentVersion) } : {}),
     ...(readString(record.updatedAt) ? { updatedAt: readString(record.updatedAt) } : {}),
     ...(typeof record.updatedBy === "string" && record.updatedBy ? { updatedBy: record.updatedBy } : {}),
+    ...(readString(record.id) ? { id: readString(record.id) } : {}),
+    ...(readString(record.slug) ? { slug: readString(record.slug) } : {}),
   });
 }
 
