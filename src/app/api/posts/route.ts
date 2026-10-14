@@ -142,7 +142,7 @@ export async function POST(request: Request) {
   try {
     assertSameOrigin(request);
     const user = await requireUser();
-    const created = await createPost(user.id, await readPostJson(request));
+    const created = await createPost(user, await readPostJson(request));
     return json(created, 201);
   } catch (error) {
     return apiError(error);
