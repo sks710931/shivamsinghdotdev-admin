@@ -4,8 +4,8 @@ import payloads from "./xss-payloads.json";
 
 let sanitizeHtml: ((h: string) => string) | undefined;
 try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  sanitizeHtml = (await import("@/server/sanitize")).sanitizeHtml;
+  const mod = "@/server/sanitize";
+  sanitizeHtml = ((await import(/* @vite-ignore */ mod)) as { sanitizeHtml: (h: string) => string }).sanitizeHtml;
 } catch {
   sanitizeHtml = undefined;
 }
