@@ -104,6 +104,26 @@ jobs:
             > .env.local
       - name: Seed users
         run: pnpm seed:local
+      - name: Security DB tests
+        env:
+          CI: "true"
+        run: |
+          set +x
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%$'\r'}"
+            case "$line" in
+              TEST_ADMIN_ID=*|TEST_GUEST_ID=*|TEST_OTHER_POST_ID=*|DB_*=*)
+                key="${line%%=*}"
+                val="${line#*=}"
+                val="${val%\"}"
+                val="${val#\"}"
+                val="${val%\'}"
+                val="${val#\'}"
+                export "$key=$val"
+                ;;
+            esac
+          done < .env.local
+          CI=true pnpm test:db
       - name: Build
         run: pnpm build
       - name: Start app
