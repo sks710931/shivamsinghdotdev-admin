@@ -98,7 +98,7 @@ if node -e "process.exit(require('./package.json').scripts['db:migrate']?0:1)"; 
   # Migrations need sa. Export it only for this command so the dev server keeps the app login.
   DB_USER=sa DB_PASSWORD="$SA_PASSWORD" pnpm db:migrate
 else
-  echo "No db:migrate script yet; the app will bootstrap its schema on first request."
+  echo "No db:migrate script yet; the schema comes only from db:migrate."
 fi
 
 [ "${1:-}" = "--db-only" ] && exit 0
