@@ -6,7 +6,7 @@ BASE=${BASE%/}
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-ENV_FILE="${ROOT}/.env.local"
+ENV_FILE="${ENV_FILE:-${ROOT}/.env.local}"
 
 read_env() {
   local key="$1"
@@ -91,7 +91,27 @@ record() {
   else
     printf 'FAIL %s (expected %s, got %s)\n' "$label" "$expected" "$actual"
     failed=1
+    exit 1
   fi
+}
+
+call_api() {
+  local resp_out="$1"
+  shift
+  local code
+  code="$(curl -sS --max-time 20 -o "$resp_out" -w '%{http_code}' "$@" || true)"
+  if [[ -z "$code" ]]; then
+    code="000"
+  fi
+  printf '%s' "$code"
+}
+
+extract_json() {
+  local filter="$1"
+  local file="$2"
+  local val=""
+  val="$(jq -r "$filter" "$file" 2>/dev/null || true)"
+  printf '%s' "$val"
 }
 
 http_code() {
@@ -153,5 +173,483 @@ else
   printf 'SKIP admin GET /api/posts/$TEST_OTHER_POST_ID/revision (TEST_OTHER_POST_ID is not set)\n'
   printf 'SKIP unauthenticated GET /api/posts/$TEST_OTHER_POST_ID (TEST_OTHER_POST_ID is not set)\n'
 fi
+
+# -----------------------------------------------------------------------------
+# Posts API workflow (contract v1.2)
+# -----------------------------------------------------------------------------
+
+resp_json="${cookie_dir}/resp.json"
+slug_suffix="$(date +%s)-$RANDOM"
+slug="smoke-post-${slug_suffix}"
+title="Smoke Post ${slug_suffix}"
+
+# Assert unauthenticated POST /api/posts is rejected (401)
+dummy_version="AAAAAAAAAAA="
+dummy_payload="$(jq -n --arg version "$dummy_version" '{version: $version}')"
+dummy_post_payload="$(jq -n \
+  --arg title "Unauth post" \
+  --arg slug "unauth-${slug_suffix}" \
+  --arg bodyHtml "<p>body</p>" \
+  '{title: $title, slug: $slug, bodyHtml: $bodyHtml}')"
+
+record "unauthenticated POST /api/posts" "401" \
+  "$(http_code -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$dummy_post_payload" "${BASE}/api/posts")"
+
+# 1. Create article
+create_payload="$(jq -n \
+  --arg title "$title" \
+  --arg slug "$slug" \
+  --arg summary "Initial smoke draft summary" \
+  --arg tags "smoke,contract" \
+  --arg seoTitle "Smoke SEO Title" \
+  --arg seoKeywords "smoke,test" \
+  --arg bodyHtml "<p>Initial smoke draft body content</p>" \
+  '{title: $title, slug: $slug, summary: $summary, tags: $tags, seoTitle: $seoTitle, seoKeywords: $seoKeywords, bodyHtml: $bodyHtml}')"
+
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$create_payload" "${BASE}/api/posts")"
+record "admin create article" "201" "$code"
+
+post_id="$(extract_json '.id // empty' "$resp_json")"
+if [[ -z "$post_id" ]]; then
+  printf 'FAIL expected created article to return an id\n'
+  exit 1
+fi
+
+# Assert unauthenticated requests to mutating endpoints are rejected (401)
+record "unauthenticated PATCH /api/posts/[id]" "401" \
+  "$(http_code -H "Origin: ${BASE}" -H "Content-Type: application/json" -X PATCH --data-binary "$dummy_payload" "${BASE}/api/posts/${post_id}")"
+record "unauthenticated POST /api/posts/[id]/publish" "401" \
+  "$(http_code -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$dummy_payload" "${BASE}/api/posts/${post_id}/publish")"
+record "unauthenticated POST /api/posts/[id]/revision/publish" "401" \
+  "$(http_code -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$dummy_payload" "${BASE}/api/posts/${post_id}/revision/publish")"
+record "unauthenticated DELETE /api/posts/[id]/revision" "401" \
+  "$(http_code -H "Origin: ${BASE}" -H "Content-Type: application/json" -X DELETE --data-binary "$dummy_payload" "${BASE}/api/posts/${post_id}/revision")"
+record "unauthenticated POST /api/posts/[id]/unpublish" "401" \
+  "$(http_code -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$dummy_payload" "${BASE}/api/posts/${post_id}/unpublish")"
+record "unauthenticated POST /api/posts/[id]/archive" "401" \
+  "$(http_code -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$dummy_payload" "${BASE}/api/posts/${post_id}/archive")"
+
+# Assert guest requests to admin mutating endpoints are rejected (403)
+record "guest POST /api/posts/[id]/publish" "403" \
+  "$(http_code -b "$guest_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$dummy_payload" "${BASE}/api/posts/${post_id}/publish")"
+record "guest POST /api/posts/[id]/revision/publish" "403" \
+  "$(http_code -b "$guest_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$dummy_payload" "${BASE}/api/posts/${post_id}/revision/publish")"
+record "guest DELETE /api/posts/[id]/revision" "403" \
+  "$(http_code -b "$guest_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X DELETE --data-binary "$dummy_payload" "${BASE}/api/posts/${post_id}/revision")"
+record "guest POST /api/posts/[id]/unpublish" "403" \
+  "$(http_code -b "$guest_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$dummy_payload" "${BASE}/api/posts/${post_id}/unpublish")"
+record "guest POST /api/posts/[id]/archive" "403" \
+  "$(http_code -b "$guest_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$dummy_payload" "${BASE}/api/posts/${post_id}/archive")"
+
+guest_force_payload="$(jq -n --arg version "$dummy_version" '{version: $version, force: true}')"
+record "guest PATCH /api/posts/[id] with force:true" "403" \
+  "$(http_code -b "$guest_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X PATCH --data-binary "$guest_force_payload" "${BASE}/api/posts/${post_id}")"
+
+# 2. Save draft (PATCH with version)
+# Get initial post version
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${post_id}")"
+record "admin GET /api/posts/[id] for initial draft version" "200" "$code"
+v0="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$v0" ]]; then
+  printf 'FAIL expected post to have a version\n'
+  exit 1
+fi
+
+save_draft_payload="$(jq -n \
+  --arg version "$v0" \
+  --arg summary "Saved draft summary" \
+  --arg bodyHtml "<p>Saved draft body content</p>" \
+  '{version: $version, summary: $summary, bodyHtml: $bodyHtml}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X PATCH --data-binary "$save_draft_payload" "${BASE}/api/posts/${post_id}")"
+record "admin save draft (PATCH with version)" "200" "$code"
+v1="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$v1" || "$v1" == "$v0" ]]; then
+  printf 'FAIL expected save draft to return an updated version\n'
+  exit 1
+fi
+
+# 3. Reopen (GET)
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${post_id}")"
+record "admin reopen (GET)" "200" "$code"
+reopened_status="$(extract_json '.status // empty' "$resp_json")"
+reopened_summary="$(extract_json '.summary // empty' "$resp_json")"
+reopened_version="$(extract_json '.version // empty' "$resp_json")"
+record "reopened post status is draft" "draft" "$reopened_status"
+record "reopened post summary matches" "Saved draft summary" "$reopened_summary"
+if [[ "$reopened_version" != "$v1" ]]; then
+  printf 'FAIL expected reopened version to match saved version\n'
+  exit 1
+fi
+
+# 4. Edit+save
+edit_save_payload="$(jq -n \
+  --arg version "$reopened_version" \
+  --arg title "Smoke Post Edited" \
+  --arg bodyHtml "<p>Edited and saved body content</p>" \
+  '{version: $version, title: $title, bodyHtml: $bodyHtml}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X PATCH --data-binary "$edit_save_payload" "${BASE}/api/posts/${post_id}")"
+record "admin edit+save" "200" "$code"
+v2="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$v2" || "$v2" == "$reopened_version" ]]; then
+  printf 'FAIL expected edit+save to return an updated version\n'
+  exit 1
+fi
+
+# 5. Verify a stale version returns 409
+stale_payload="$(jq -n \
+  --arg version "$v0" \
+  --arg title "Stale edit should fail" \
+  '{version: $version, title: $title}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X PATCH --data-binary "$stale_payload" "${BASE}/api/posts/${post_id}")"
+record "admin verify a stale version returns 409" "409" "$code"
+stale_error_code="$(extract_json '.code // empty' "$resp_json")"
+record "stale version error code is stale_version" "stale_version" "$stale_error_code"
+
+# 6. Preview
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${post_id}")"
+record "admin preview (GET)" "200" "$code"
+preview_title="$(extract_json '.title // empty' "$resp_json")"
+preview_status="$(extract_json '.status // empty' "$resp_json")"
+preview_version="$(extract_json '.version // empty' "$resp_json")"
+record "preview post title matches edited" "Smoke Post Edited" "$preview_title"
+record "preview post status is draft" "draft" "$preview_status"
+if [[ "$preview_version" != "$v2" ]]; then
+  printf 'FAIL expected preview post version to match v2\n'
+  exit 1
+fi
+
+# 7. Publish (draft only)
+publish_payload="$(jq -n --arg version "$v2" '{version: $version}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$publish_payload" "${BASE}/api/posts/${post_id}/publish")"
+record "admin publish (draft only)" "200" "$code"
+published_status="$(extract_json '.status // empty' "$resp_json")"
+published_at="$(extract_json '.publishedAt // empty' "$resp_json")"
+record "published post status is published" "published" "$published_status"
+if [[ -z "$published_at" || "$published_at" == "null" ]]; then
+  printf 'FAIL expected published post to have publishedAt timestamp\n'
+  exit 1
+fi
+v_published="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$v_published" ]]; then
+  printf 'FAIL expected published post to have a version\n'
+  exit 1
+fi
+
+# Verify publish is draft only: publishing already-published post returns 409 not_draft
+republish_payload="$(jq -n --arg version "$v_published" '{version: $version}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$republish_payload" "${BASE}/api/posts/${post_id}/publish")"
+record "admin publish non-draft returns 409 (draft only)" "409" "$code"
+not_draft_code="$(extract_json '.code // empty' "$resp_json")"
+record "publish non-draft error code is not_draft" "not_draft" "$not_draft_code"
+
+# 8. Edit the published article to create a pending revision
+edit_published_payload="$(jq -n \
+  --arg version "$v_published" \
+  --arg title "Smoke Post Revised Title" \
+  --arg summary "Pending revision summary" \
+  --arg bodyHtml "<p>Pending revision body content</p>" \
+  '{version: $version, title: $title, summary: $summary, bodyHtml: $bodyHtml}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X PATCH --data-binary "$edit_published_payload" "${BASE}/api/posts/${post_id}")"
+record "admin edit published article to create pending revision" "200" "$code"
+rev_version="$(extract_json '.version // empty' "$resp_json")"
+rev_base_version="$(extract_json '.baseVersion // empty' "$resp_json")"
+record "pending revision baseVersion matches published version" "$v_published" "$rev_base_version"
+if [[ -z "$rev_version" ]]; then
+  printf 'FAIL expected pending revision to have a version\n'
+  exit 1
+fi
+
+# 9. GET /revision
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${post_id}/revision")"
+record "admin GET /api/posts/[id]/revision" "200" "$code"
+get_rev_title="$(extract_json '.title // empty' "$resp_json")"
+get_rev_version="$(extract_json '.version // empty' "$resp_json")"
+record "GET /revision title matches pending revision" "Smoke Post Revised Title" "$get_rev_title"
+record "GET /revision version matches pending revision" "$rev_version" "$get_rev_version"
+
+# 10. Approve via POST /[id]/revision/publish with the revision version
+approve_payload="$(jq -n --arg version "$rev_version" '{version: $version}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$approve_payload" "${BASE}/api/posts/${post_id}/revision/publish")"
+record "admin approve via POST /[id]/revision/publish with revision version" "200" "$code"
+live_after_rev_status="$(extract_json '.status // empty' "$resp_json")"
+live_after_rev_title="$(extract_json '.title // empty' "$resp_json")"
+live_after_rev_has_pending="$(extract_json '.hasPendingRevision' "$resp_json")"
+record "live post status after revision publish is published" "published" "$live_after_rev_status"
+record "live post title after revision publish is revised title" "Smoke Post Revised Title" "$live_after_rev_title"
+record "live post hasPendingRevision after revision publish is false" "false" "$live_after_rev_has_pending"
+v_live_rev="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$v_live_rev" ]]; then
+  printf 'FAIL expected live post to have a version after revision publish\n'
+  exit 1
+fi
+
+# 11. Unpublish
+unpublish_payload="$(jq -n --arg version "$v_live_rev" '{version: $version}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$unpublish_payload" "${BASE}/api/posts/${post_id}/unpublish")"
+record "admin unpublish via POST /[id]/unpublish" "200" "$code"
+unpublish_status="$(extract_json '.status // empty' "$resp_json")"
+record "post status after unpublish is draft" "draft" "$unpublish_status"
+v_draft_after_unpublish="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$v_draft_after_unpublish" ]]; then
+  printf 'FAIL expected post to have a version after unpublish\n'
+  exit 1
+fi
+
+# Confirm unpublish on non-published returns 409 not_published per contract v1.2
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$unpublish_payload" "${BASE}/api/posts/${post_id}/unpublish")"
+record "admin unpublish draft returns 409 not_published" "409" "$code"
+not_published_code="$(extract_json '.code // empty' "$resp_json")"
+record "unpublish draft error code is not_published" "not_published" "$not_published_code"
+
+# -----------------------------------------------------------------------------
+# 12. Stored XSS check
+# -----------------------------------------------------------------------------
+xss_slug_suffix="$(date +%s)-$RANDOM"
+xss_slug="smoke-xss-${xss_slug_suffix}"
+xss_title="Smoke XSS ${xss_slug_suffix}"
+
+xss_create_payload="$(jq -n \
+  --arg title "$xss_title" \
+  --arg slug "$xss_slug" \
+  --arg summary "Stored XSS smoke test draft" \
+  --arg tags "xss,smoke" \
+  --arg seoTitle "Smoke XSS" \
+  --arg seoKeywords "xss,smoke" \
+  --arg bodyHtml "<p>Initial clean draft body</p>" \
+  '{title: $title, slug: $slug, summary: $summary, tags: $tags, seoTitle: $seoTitle, seoKeywords: $seoKeywords, bodyHtml: $bodyHtml}')"
+
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$xss_create_payload" "${BASE}/api/posts")"
+record "admin create draft for stored XSS check" "201" "$code"
+
+xss_post_id="$(extract_json '.id // empty' "$resp_json")"
+if [[ -z "$xss_post_id" ]]; then
+  printf 'FAIL expected created XSS post to return an id\n'
+  exit 1
+fi
+
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${xss_post_id}")"
+record "admin GET draft for initial version before XSS save" "200" "$code"
+xss_v0="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$xss_v0" ]]; then
+  printf 'FAIL expected XSS post to have a version\n'
+  exit 1
+fi
+
+# Save draft whose body contains XSS payloads
+xss_dangerous_body='<p>Safe start</p><script>alert(1)</script><img src=x onerror=alert(1)><a href="javascript:alert(1)">x</a><button onclick="alert(1)">click</button><p onclick="alert(1)">more</p><svg onload="alert(1)"><circle cx="5" cy="5" r="5"/></svg><p>Safe end</p>'
+
+xss_save_payload="$(jq -n \
+  --arg version "$xss_v0" \
+  --arg bodyHtml "$xss_dangerous_body" \
+  '{version: $version, bodyHtml: $bodyHtml}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X PATCH --data-binary "$xss_save_payload" "${BASE}/api/posts/${xss_post_id}")"
+record "admin save draft with stored XSS payloads" "200" "$code"
+xss_v1="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$xss_v1" || "$xss_v1" == "$xss_v0" ]]; then
+  printf 'FAIL expected save draft with XSS payloads to return an updated version\n'
+  exit 1
+fi
+
+# Publish it
+xss_publish_payload="$(jq -n --arg version "$xss_v1" '{version: $version}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$xss_publish_payload" "${BASE}/api/posts/${xss_post_id}/publish")"
+record "admin publish stored XSS post" "200" "$code"
+
+# GET the post and assert none of those dangerous fragments remain in stored/returned HTML
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${xss_post_id}")"
+record "admin GET published post for stored XSS check" "200" "$code"
+
+xss_stored_body="$(extract_json '.bodyHtml // empty' "$resp_json")"
+if [[ -z "$xss_stored_body" ]]; then
+  printf 'FAIL expected published post to contain stored bodyHtml\n'
+  exit 1
+fi
+
+for frag in "script" "onerror" "onload" "onclick" "javascript:"; do
+  if grep -qi "$frag" "$resp_json"; then
+    record "stored XSS dangerous fragment '$frag' absent from response" "absent" "found"
+  else
+    record "stored XSS dangerous fragment '$frag' absent from response" "absent" "absent"
+  fi
+done
+
+# -----------------------------------------------------------------------------
+# 13. Cross-user isolation
+# -----------------------------------------------------------------------------
+iso_slug_suffix="$(date +%s)-$RANDOM"
+iso_slug="smoke-iso-${iso_slug_suffix}"
+iso_title="Smoke Isolation ${iso_slug_suffix}"
+iso_summary="Admin post for cross-user isolation testing"
+iso_body="<p>Original admin post content that guest must not change.</p>"
+
+iso_create_payload="$(jq -n \
+  --arg title "$iso_title" \
+  --arg slug "$iso_slug" \
+  --arg summary "$iso_summary" \
+  --arg bodyHtml "$iso_body" \
+  '{title: $title, slug: $slug, summary: $summary, bodyHtml: $bodyHtml}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$iso_create_payload" "${BASE}/api/posts")"
+record "admin create post for cross-user isolation" "201" "$code"
+
+iso_post_id="$(extract_json '.id // empty' "$resp_json")"
+if [[ -z "$iso_post_id" ]]; then
+  printf 'FAIL expected created isolation post to return an id\n'
+  exit 1
+fi
+
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${iso_post_id}")"
+record "admin GET isolation post initial state" "200" "$code"
+iso_v_before="$(extract_json '.version // empty' "$resp_json")"
+iso_title_before="$(extract_json '.title // empty' "$resp_json")"
+iso_body_before="$(extract_json '.bodyHtml // empty' "$resp_json")"
+iso_summary_before="$(extract_json '.summary // empty' "$resp_json")"
+if [[ -z "$iso_v_before" ]]; then
+  printf 'FAIL expected isolation post to have a version\n'
+  exit 1
+fi
+
+# Guest tries GET on admin's post -> 404 not_found
+code="$(call_api "$resp_json" -b "$guest_jar" "${BASE}/api/posts/${iso_post_id}")"
+record "guest GET admin post returns 404" "404" "$code"
+guest_get_err="$(extract_json '.code // empty' "$resp_json")"
+record "guest GET admin post error code is not_found" "not_found" "$guest_get_err"
+
+# Guest tries PATCH on admin's post -> 404 not_found
+guest_patch_payload="$(jq -n \
+  --arg version "$iso_v_before" \
+  --arg title "Guest Tampered Title" \
+  --arg bodyHtml "<p>Guest tampered body content</p>" \
+  '{version: $version, title: $title, bodyHtml: $bodyHtml}')"
+code="$(call_api "$resp_json" -b "$guest_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X PATCH --data-binary "$guest_patch_payload" "${BASE}/api/posts/${iso_post_id}")"
+record "guest PATCH admin post returns 404" "404" "$code"
+guest_patch_err="$(extract_json '.code // empty' "$resp_json")"
+record "guest PATCH admin post error code is not_found" "not_found" "$guest_patch_err"
+
+# Guest tries GET /revision on admin's post -> 404 not_found
+code="$(call_api "$resp_json" -b "$guest_jar" "${BASE}/api/posts/${iso_post_id}/revision")"
+record "guest GET admin post revision returns 404" "404" "$code"
+guest_rev_err="$(extract_json '.code // empty' "$resp_json")"
+record "guest GET admin post revision error code is not_found" "not_found" "$guest_rev_err"
+
+# Assert post is unchanged afterwards
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${iso_post_id}")"
+record "admin GET isolation post after guest attempts" "200" "$code"
+iso_v_after="$(extract_json '.version // empty' "$resp_json")"
+iso_title_after="$(extract_json '.title // empty' "$resp_json")"
+iso_body_after="$(extract_json '.bodyHtml // empty' "$resp_json")"
+iso_summary_after="$(extract_json '.summary // empty' "$resp_json")"
+
+record "isolation post version unchanged after guest attempts" "$iso_v_before" "$iso_v_after"
+record "isolation post title unchanged after guest attempts" "$iso_title_before" "$iso_title_after"
+record "isolation post bodyHtml unchanged after guest attempts" "$iso_body_before" "$iso_body_after"
+record "isolation post summary unchanged after guest attempts" "$iso_summary_before" "$iso_summary_after"
+
+# -----------------------------------------------------------------------------
+# 14. Unpublish semantics: published post with pending revision
+# -----------------------------------------------------------------------------
+unpub_slug_suffix="$(date +%s)-$RANDOM"
+unpub_slug="smoke-unpub-${unpub_slug_suffix}"
+unpub_title="Smoke Unpublish ${unpub_slug_suffix}"
+unpub_summary="Draft post for unpublish semantics check"
+unpub_body="<p>Body content for unpublish semantics check</p>"
+
+unpub_create_payload="$(jq -n \
+  --arg title "$unpub_title" \
+  --arg slug "$unpub_slug" \
+  --arg summary "$unpub_summary" \
+  --arg bodyHtml "$unpub_body" \
+  '{title: $title, slug: $slug, summary: $summary, bodyHtml: $bodyHtml}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$unpub_create_payload" "${BASE}/api/posts")"
+record "admin create post for unpublish check" "201" "$code"
+
+unpub_post_id="$(extract_json '.id // empty' "$resp_json")"
+if [[ -z "$unpub_post_id" ]]; then
+  printf 'FAIL expected created unpublish post to return an id\n'
+  exit 1
+fi
+
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${unpub_post_id}")"
+record "admin GET draft for unpublish check initial version" "200" "$code"
+unpub_v0="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$unpub_v0" ]]; then
+  printf 'FAIL expected unpublish draft to have a version\n'
+  exit 1
+fi
+
+# Publish the post
+unpub_publish_payload="$(jq -n --arg version "$unpub_v0" '{version: $version}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$unpub_publish_payload" "${BASE}/api/posts/${unpub_post_id}/publish")"
+record "admin publish post for unpublish check" "200" "$code"
+unpub_pub_status="$(extract_json '.status // empty' "$resp_json")"
+record "post status before unpublish is published" "published" "$unpub_pub_status"
+
+unpub_published_at_before="$(extract_json '.publishedAt // empty' "$resp_json")"
+if [[ -z "$unpub_published_at_before" || "$unpub_published_at_before" == "null" ]]; then
+  printf 'FAIL expected published post to have non-null publishedAt\n'
+  exit 1
+fi
+record "published post has non-null publishedAt" "non-null" "non-null"
+
+unpub_v_pub="$(extract_json '.version // empty' "$resp_json")"
+if [[ -z "$unpub_v_pub" ]]; then
+  printf 'FAIL expected published post to have a version\n'
+  exit 1
+fi
+
+# Edit published post to create a pending revision
+unpub_edit_payload="$(jq -n \
+  --arg version "$unpub_v_pub" \
+  --arg title "${unpub_title} Pending Revision" \
+  --arg summary "Pending revision summary before unpublish" \
+  --arg bodyHtml "<p>Pending revision body content before unpublish</p>" \
+  '{version: $version, title: $title, summary: $summary, bodyHtml: $bodyHtml}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X PATCH --data-binary "$unpub_edit_payload" "${BASE}/api/posts/${unpub_post_id}")"
+record "admin edit published post to create pending revision for unpublish check" "200" "$code"
+
+# Verify post currently has pending revision before unpublish
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${unpub_post_id}")"
+record "admin GET published post before unpublish" "200" "$code"
+unpub_has_pending_before="$(extract_json '.hasPendingRevision' "$resp_json")"
+record "post hasPendingRevision is true before unpublish" "true" "$unpub_has_pending_before"
+
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${unpub_post_id}/revision")"
+record "admin GET /revision before unpublish returns 200" "200" "$code"
+
+# Unpublish
+unpublish_op_payload="$(jq -n --arg version "$unpub_v_pub" '{version: $version}')"
+code="$(call_api "$resp_json" -b "$admin_jar" -H "Origin: ${BASE}" -H "Content-Type: application/json" -X POST --data-binary "$unpublish_op_payload" "${BASE}/api/posts/${unpub_post_id}/unpublish")"
+record "admin unpublish published post with pending revision" "200" "$code"
+
+unpub_status_after="$(extract_json '.status // empty' "$resp_json")"
+record "post status after unpublish is draft" "draft" "$unpub_status_after"
+
+# Assert publishedAt is kept (unchanged, non-null)
+unpub_published_at_after="$(extract_json '.publishedAt // empty' "$resp_json")"
+if [[ -z "$unpub_published_at_after" || "$unpub_published_at_after" == "null" ]]; then
+  printf 'FAIL expected publishedAt to remain non-null after unpublish\n'
+  exit 1
+fi
+record "unpublish keeps publishedAt non-null" "non-null" "non-null"
+record "unpublish keeps publishedAt unchanged" "$unpub_published_at_before" "$unpub_published_at_after"
+
+# Assert pending revision is set aside (hasPendingRevision false)
+unpub_has_pending_after="$(extract_json '.hasPendingRevision' "$resp_json")"
+record "unpublish sets aside pending revision (hasPendingRevision is false)" "false" "$unpub_has_pending_after"
+
+# Confirm with GET /api/posts/[id]
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${unpub_post_id}")"
+record "admin GET post after unpublish" "200" "$code"
+get_unpub_status="$(extract_json '.status // empty' "$resp_json")"
+get_unpub_published_at="$(extract_json '.publishedAt // empty' "$resp_json")"
+get_unpub_has_pending="$(extract_json '.hasPendingRevision' "$resp_json")"
+record "GET post status after unpublish is draft" "draft" "$get_unpub_status"
+record "GET post publishedAt after unpublish is unchanged" "$unpub_published_at_before" "$get_unpub_published_at"
+record "GET post hasPendingRevision after unpublish is false" "false" "$get_unpub_has_pending"
+
+# Assert GET /revision returns 404 per contract docs
+code="$(call_api "$resp_json" -b "$admin_jar" "${BASE}/api/posts/${unpub_post_id}/revision")"
+record "admin GET /revision after unpublish returns 404" "404" "$code"
+unpub_rev_err="$(extract_json '.code // empty' "$resp_json")"
+record "admin GET /revision after unpublish error code is not_found" "not_found" "$unpub_rev_err"
 
 exit "$failed"

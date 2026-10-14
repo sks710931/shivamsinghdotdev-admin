@@ -87,6 +87,18 @@ function isDuplicateKey(error: unknown): boolean {
   return number === 2601 || number === 2627;
 }
 
+async function currentLiveVersion(actor: PostActor, id: string, fallback?: string): Promise<string> {
+  const live = await getPostById(actor, id);
+  return live?.version ?? fallback ?? "";
+}
+
+async function currentPublishedVersion(actor: PostActor, id: string, fallback?: string): Promise<string> {
+  const pending = await getPendingRevision(actor, id);
+  if (pending) return pending.version;
+  const live = await getPostById(actor, id);
+  return live?.version ?? fallback ?? "";
+}
+
 /**
  * PATCH /api/posts/[id]. Draft posts are updated in place with a RowVersion check.
  * Published posts are handled by the pending-revision path (next commit).
@@ -104,7 +116,9 @@ export async function updatePost(actor: PostActor, id: string, input: unknown): 
     return updatePublishedPost(actor, current, patch);
   }
   if (current.version !== patch.version.toString("base64")) {
-    throw new AuthError("This post changed since you loaded it.", 409, "stale_version");
+    throw new AuthError("This post changed since you loaded it.", 409, "stale_version", {
+      version: current.version,
+    });
   }
 
   const changed = (Object.keys(patch.changes) as EditableField[]).filter(
@@ -131,7 +145,10 @@ export async function updatePost(actor: PostActor, id: string, input: unknown): 
     if (isDuplicateKey(error)) throw new AuthError("That URL slug is already used.", 409, "slug_taken");
     throw error;
   }
-  if (rows === 0) throw new AuthError("This post changed since you loaded it.", 409, "stale_version");
+  if (rows === 0) {
+    const version = await currentLiveVersion(actor, id, current.version);
+    throw new AuthError("This post changed since you loaded it.", 409, "stale_version", { version });
+  }
 
   const updated = await getPostById(actor, id);
   if (!updated) throw new AuthError("Post not found.", 404, "not_found");
@@ -159,7 +176,8 @@ async function updatePublishedPost(
   const pending = await getPendingRevision(actor, live.id);
   const expected = pending ? pending.version : live.version;
   if (!patch.force && expected !== patch.version.toString("base64")) {
-    throw new AuthError("This post changed since you loaded it.", 409, "stale_version");
+    const version = await currentPublishedVersion(actor, live.id, live.version);
+    throw new AuthError("This post changed since you loaded it.", 409, "stale_version", { version });
   }
 
   const base = snapshotOf(pending ?? live);
@@ -222,11 +240,15 @@ async function updatePublishedPost(
   } catch (error) {
     // IX_PostRevision_PendingPost: another request created the pending revision first.
     if (isDuplicateKey(error) && String((error as { message?: unknown }).message ?? "").includes("IX_PostRevision_PendingPost")) {
-      throw new AuthError("This post changed since you loaded it.", 409, "stale_version");
+      const version = await currentPublishedVersion(actor, live.id, live.version);
+      throw new AuthError("This post changed since you loaded it.", 409, "stale_version", { version });
     }
     throw error;
   }
-  if (rows === 0) throw new AuthError("This post changed since you loaded it.", 409, "stale_version");
+  if (rows === 0) {
+    const version = await currentPublishedVersion(actor, live.id, live.version);
+    throw new AuthError("This post changed since you loaded it.", 409, "stale_version", { version });
+  }
 
   const saved = await getPendingRevision(actor, live.id);
   if (!saved) throw new AuthError("Post not found.", 404, "not_found");
