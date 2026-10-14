@@ -23,7 +23,8 @@ const revisionCasesReady = Boolean(
 );
 
 async function createPublishedPost(actor: { id: string; role: "admin" | "guest" }) {
-  const posts = await import("@/server/posts");
+  const pm = "@/server/posts";
+  const posts: any = await import(/* @vite-ignore */ pm).catch(() => null);
   const created = await posts.createPost(actor, {
     title: `Publish workflow ${actor.role}`,
     slug: `publish-workflow-${actor.role}-${crypto.randomUUID()}`,
@@ -38,10 +39,15 @@ async function createPublishedPost(actor: { id: string; role: "admin" | "guest" 
 async function setupGuestPendingRevision() {
   await createPublishedPost(admin);
   const id = await createPublishedPost(guest);
-  const posts = await import("@/server/posts");
+  const pm = "@/server/posts";
+  const posts: any = await import(/* @vite-ignore */ pm).catch(() => null);
   const version = (await posts.getPostById(admin, id)).version;
-  await (await import("@/server/post-update")).updatePost(guest, id, { title: "rev", version });
-  const pending = await (await import("@/server/post-revision")).getPendingRevision(admin, id);
+  const um = "@/server/post-update";
+  const postUpdate: any = await import(/* @vite-ignore */ um).catch(() => null);
+  await postUpdate.updatePost(guest, id, { title: "rev", version });
+  const rm = "@/server/post-revision";
+  const postRevision: any = await import(/* @vite-ignore */ rm).catch(() => null);
+  const pending = await postRevision.getPendingRevision(admin, id);
   return { id, revVersion: pending.version as number };
 }
 
@@ -75,7 +81,8 @@ describe.skipIf(!mod || !process.env.DB_SERVER || !process.env.TEST_GUEST_ID)("p
 
   it.skipIf(!revisionCasesReady)("old revision cannot be published after unpublish", async () => {
     const { id, revVersion } = await setupGuestPendingRevision();
-    const posts = await import("@/server/posts");
+    const pm = "@/server/posts";
+    const posts: any = await import(/* @vite-ignore */ pm).catch(() => null);
     const cur = await posts.getPostById(admin, id);
     await mod.unpublishPost(admin, id, { version: cur.version });
     let status: number | undefined;
@@ -89,7 +96,8 @@ describe.skipIf(!mod || !process.env.DB_SERVER || !process.env.TEST_GUEST_ID)("p
 
   it.skipIf(!revisionCasesReady)("old revision cannot be published after archive", async () => {
     const { id, revVersion } = await setupGuestPendingRevision();
-    const posts = await import("@/server/posts");
+    const pm = "@/server/posts";
+    const posts: any = await import(/* @vite-ignore */ pm).catch(() => null);
     const cur = await posts.getPostById(admin, id);
     await mod.archivePost(admin, id, { version: cur.version });
     let status: number | undefined;
@@ -103,7 +111,8 @@ describe.skipIf(!mod || !process.env.DB_SERVER || !process.env.TEST_GUEST_ID)("p
 
   it.skipIf(!revisionCasesReady)("archived post + force returns 409 archived", async () => {
     const { id, revVersion } = await setupGuestPendingRevision();
-    const posts = await import("@/server/posts");
+    const pm = "@/server/posts";
+    const posts: any = await import(/* @vite-ignore */ pm).catch(() => null);
     const cur = await posts.getPostById(admin, id);
     await mod.archivePost(admin, id, { version: cur.version });
     let status: number | undefined;
