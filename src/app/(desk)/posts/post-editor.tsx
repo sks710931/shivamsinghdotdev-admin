@@ -598,8 +598,8 @@ export function PostEditor({
     void run(async () => {
       const model = dirty || !post ? await persist({ navigate: false }) : { post, revision };
       const result = await getPostsApi().unpublishPost(model.post.id, { version: model.post.version });
-      setPost({ ...model.post, status: "draft", version: result.version, publishedAt: null });
-      setRevision(model.revision);
+      setPost(result);
+      setRevision(null);
       setFieldErrors({});
     }, "The post could not be unpublished.");
   }

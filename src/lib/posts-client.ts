@@ -142,9 +142,7 @@ export type PublishPostResult = {
   publishedAt: string;
 };
 
-export type UnpublishPostResult = {
-  version: string;
-};
+export type UnpublishPostResult = PostDetail;
 
 export type RevisionMutationInput = {
   version: string;
@@ -496,17 +494,6 @@ function parsePublish(body: unknown): PublishPostResult {
   return { version, publishedAt };
 }
 
-function parseUnpublish(body: unknown): UnpublishPostResult {
-  if (!isRecord(body) || !readString(body.version)) {
-    throw new ApiError({
-      status: 500,
-      error: "The server returned an unexpected unpublish result.",
-      code: "unknown",
-    });
-  }
-  return { version: readString(body.version) ?? "" };
-}
-
 async function readBody(response: Response): Promise<unknown> {
   if (response.status === 204) {
     return null;
@@ -567,7 +554,7 @@ export interface PostsApi {
   deleteRevision(id: string, input: RevisionMutationInput): Promise<void>;
   publishPost(id: string, input: PublishDraftInput): Promise<PublishPostResult>;
   publishRevision(id: string, input: PublishRevisionInput): Promise<PublishPostResult>;
-  unpublishPost(id: string, input: RevisionMutationInput): Promise<UnpublishPostResult>;
+  unpublishPost(id: string, input: RevisionMutationInput): Promise<PostDetail>;
   archivePost(id: string, input: RevisionMutationInput): Promise<void>;
 }
 
@@ -608,7 +595,7 @@ export const httpPostsApi: PostsApi = {
   },
   async unpublishPost(id, input) {
     const { body } = await request(`/api/posts/${encodeURIComponent(id)}/unpublish`, jsonInit("POST", input));
-    return parseUnpublish(body);
+    return parsePostDetail(body);
   },
   async archivePost(id, input) {
     await request(`/api/posts/${encodeURIComponent(id)}/archive`, jsonInit("POST", input));
