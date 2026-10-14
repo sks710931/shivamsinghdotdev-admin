@@ -7,6 +7,7 @@ import {
   getPostsApi,
   httpPostsApi,
   parsePostList,
+  setPostsApiForTesting,
 } from "@/lib/posts-client";
 
 const draftId = "11111111-1111-4111-8111-111111111111";
@@ -88,22 +89,14 @@ describe("apiErrorFromResponse", () => {
 });
 
 describe("parsePostList", () => {
-  it("adapts today's bare array and applies filters locally", () => {
-    const result = parsePostList(
-      [
+  it("rejects non-contract payloads", () => {
+    expect(() =>
+      parsePostList([
         { id: "1", title: "A", slug: "a", status: "draft", updatedAt: "2026-10-01T00:00:00.000Z" },
-        { id: "2", title: "B", slug: "b", status: "published", updatedAt: "2026-10-02T00:00:00.000Z" },
-      ],
-      { status: "published" },
-    );
-    expect(result.total).toBe(1);
-    expect(result.items[0]).toMatchObject({
-      id: "2",
-      status: "published",
-      hasPendingRevision: false,
-      authorName: "",
-      publishedAt: null,
-    });
+      ]),
+    ).toThrow(ApiError);
+    expect(() => parsePostList(null)).toThrow(ApiError);
+    expect(() => parsePostList({ items: "not-an-array" })).toThrow(ApiError);
   });
 
   it("trusts a contract list payload", () => {
@@ -123,7 +116,6 @@ describe("parsePostList", () => {
         ],
         total: 4,
       },
-      { status: "draft" },
     );
     expect(result.total).toBe(4);
     expect(result.items).toHaveLength(1);
@@ -132,6 +124,10 @@ describe("parsePostList", () => {
 });
 
 describe("getPostsApi", () => {
+  afterEach(() => {
+    setPostsApiForTesting(null);
+  });
+
   it("uses HTTP unless the mock flag is set", () => {
     const previous = process.env.NEXT_PUBLIC_POSTS_API_MOCK;
     delete process.env.NEXT_PUBLIC_POSTS_API_MOCK;
@@ -142,6 +138,31 @@ describe("getPostsApi", () => {
       delete process.env.NEXT_PUBLIC_POSTS_API_MOCK;
     } else {
       process.env.NEXT_PUBLIC_POSTS_API_MOCK = previous;
+    }
+  });
+
+  it("allows test-only injection when NODE_ENV === 'test'", () => {
+    const customApi = { ...httpPostsApi };
+    setPostsApiForTesting(customApi);
+    expect(getPostsApi()).toBe(customApi);
+  });
+
+  it("fails closed when NODE_ENV !== 'test'", () => {
+    const prevMock = process.env.NEXT_PUBLIC_POSTS_API_MOCK;
+    try {
+      vi.stubEnv("NODE_ENV", "production");
+      process.env.NEXT_PUBLIC_POSTS_API_MOCK = "1";
+      expect(() => getPostsApi()).toThrow("NEXT_PUBLIC_POSTS_API_MOCK is only allowed when NODE_ENV === 'test'");
+      expect(() => setPostsApiForTesting(mockPostsApi)).toThrow(
+        "setPostsApiForTesting is only allowed when NODE_ENV === 'test'",
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      if (prevMock === undefined) {
+        delete process.env.NEXT_PUBLIC_POSTS_API_MOCK;
+      } else {
+        process.env.NEXT_PUBLIC_POSTS_API_MOCK = prevMock;
+      }
     }
   });
 });

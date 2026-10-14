@@ -1,5 +1,3 @@
-import { mockPostsApi } from "@/lib/posts-client.mock";
-
 export type PostStatus = "draft" | "published" | "archived";
 
 export type PostListItem = {
@@ -105,6 +103,7 @@ export type CreatePostResult = {
  */
 export type PatchPostInput = {
   version: string;
+  force?: boolean;
   title?: string;
   slug?: string;
   summary?: string;
@@ -349,32 +348,10 @@ function parseListItem(value: unknown): PostListItem | null {
   };
 }
 
-function pageBounds(query: ListPostsQuery | undefined, total: number): { start: number; end: number } {
-  const page = query?.page && query.page > 0 ? query.page : 1;
-  const pageSize = query?.pageSize && query.pageSize > 0 ? query.pageSize : 20;
-  const start = (page - 1) * pageSize;
-  return { start, end: Math.min(total, start + pageSize) };
-}
-
 /**
- * Accepts the slice-1 list object. Also accepts today's GET /api/posts, which
- * returns a bare array and has no hasPendingRevision. Array responses are
- * filtered here because that route ignores the query string.
+ * Accepts the contract v1.2 list payload { items, total }.
  */
-export function parsePostList(body: unknown, query?: ListPostsQuery): PostListResult {
-  if (Array.isArray(body)) {
-    let items = body.map(parseListItem).filter((item): item is PostListItem => item !== null);
-    if (query?.status) {
-      const status = query.status;
-      items = items.filter((item) => item.status === status);
-    }
-    if (query?.pending) {
-      items = items.filter((item) => item.hasPendingRevision);
-    }
-    const bounds = pageBounds(query, items.length);
-    return { items: items.slice(bounds.start, bounds.end), total: items.length };
-  }
-
+export function parsePostList(body: unknown): PostListResult {
   if (!isRecord(body) || !Array.isArray(body.items)) {
     throw new ApiError({
       status: 500,
@@ -582,7 +559,7 @@ export interface PostsApi {
 export const httpPostsApi: PostsApi = {
   async listPosts(query) {
     const { body } = await request(listPath(query));
-    return parsePostList(body, query);
+    return parsePostList(body);
   },
   async getPost(id) {
     const { body } = await request(`/api/posts/${encodeURIComponent(id)}`);
@@ -623,15 +600,56 @@ export const httpPostsApi: PostsApi = {
   },
 };
 
+let testPostsApi: PostsApi | null = null;
+let testMockFallback: PostsApi | null = null;
+
 /**
- * Swap point: set NEXT_PUBLIC_POSTS_API_MOCK=1 to use the in-memory mock in
- * src/lib/posts-client.mock.ts. The mock covers every slice-1 route, including
- * list, because live GET /api/posts does not return hasPendingRevision yet.
- * Leave the variable unset to call /api/posts over HTTP.
+ * Test-only injection to allow injecting a mock PostsApi implementation
+ * without statically importing posts-client.mock in production bundles.
+ * Fails closed if invoked when NODE_ENV !== 'test'.
+ */
+export function setPostsApiForTesting(api: PostsApi | null): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("setPostsApiForTesting is only allowed when NODE_ENV === 'test'");
+  }
+  testPostsApi = api;
+}
+
+/**
+ * Test-only registration of the default in-memory mock.
+ * Fails closed if invoked when NODE_ENV !== 'test'.
+ */
+export function registerMockPostsApiForTesting(api: PostsApi): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("registerMockPostsApiForTesting is only allowed when NODE_ENV === 'test'");
+  }
+  testMockFallback = api;
+}
+
+/**
+ * Returns the PostsApi client.
+ *
+ * In production, this always returns httpPostsApi.
+ * The in-memory mock is usable only in tests (when NODE_ENV === 'test').
+ * Any attempt to use the mock outside of test mode fails closed.
  */
 export function getPostsApi(): PostsApi {
-  if (process.env.NEXT_PUBLIC_POSTS_API_MOCK === "1") {
-    return mockPostsApi;
+  if (testPostsApi) {
+    if (process.env.NODE_ENV !== "test") {
+      throw new Error("Mock posts API is only allowed when NODE_ENV === 'test'");
+    }
+    return testPostsApi;
   }
+
+  if (process.env.NEXT_PUBLIC_POSTS_API_MOCK === "1") {
+    if (process.env.NODE_ENV !== "test") {
+      throw new Error("NEXT_PUBLIC_POSTS_API_MOCK is only allowed when NODE_ENV === 'test'");
+    }
+    if (testMockFallback) {
+      return testMockFallback;
+    }
+    throw new Error("Mock posts API requested with NEXT_PUBLIC_POSTS_API_MOCK=1 but mock is not registered");
+  }
+
   return httpPostsApi;
 }

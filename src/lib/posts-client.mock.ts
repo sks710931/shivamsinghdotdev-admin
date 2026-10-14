@@ -1,9 +1,8 @@
 /**
  * MOCK posts API. In-memory only — not the server.
  *
- * Selected by getPostsApi() when NEXT_PUBLIC_POSTS_API_MOCK=1.
- * Covers the slice-1 contract, including list, because live GET /api/posts
- * has no hasPendingRevision yet.
+ * Selected by getPostsApi() when NEXT_PUBLIC_POSTS_API_MOCK=1 in test environments.
+ * Covers the slice-1 contract.
  *
  * Role checks are not enforced. The desk hides admin actions, and the real
  * API answers 403 or 404. Do not treat this store as a security boundary.
@@ -13,6 +12,7 @@
  */
 import {
   ApiError,
+  registerMockPostsApiForTesting,
   type CreatePostInput,
   type CreatePostResult,
   type ListPostsQuery,
@@ -512,3 +512,7 @@ export const mockPostsApi: PostsApi = {
     post.version = bump(post.version);
   },
 };
+
+if (process.env.NODE_ENV === "test") {
+  registerMockPostsApiForTesting(mockPostsApi);
+}
