@@ -43,3 +43,4 @@ Removed: `DELETE /api/posts/[id]` (use `/archive`), and the `revisionVersion` fi
 - For a guest, another user's post and a nonexistent id both return 404 not_found with an identical body on GET /api/posts/[id], PATCH /api/posts/[id] and GET /api/posts/[id]/revision, so existence is not disclosed.
 - A stale version on PATCH returns 409 stale_version and the error body also includes the current 'version' so the client can offer reload.
 - Clients keep a fallback GET after create until the server ships version in the create response.
+- An anonymous caller (no session) gets 401 unauthorized on every /api/posts route, before any id check or database read.
