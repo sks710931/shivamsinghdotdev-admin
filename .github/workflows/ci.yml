@@ -66,7 +66,9 @@ jobs:
         run: |
           for i in $(seq 1 60); do
             if docker exec ${{ job.services.mssql.id }} /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$DB_PASSWORD" -Q "SELECT 1"; then
-              docker exec ${{ job.services.mssql.id }} /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$DB_PASSWORD" -Q "IF DB_ID(N'blogdesk_ci') IS NULL CREATE DATABASE blogdesk_ci"
+              docker exec ${{ job.services.mssql.id }} /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$DB_PASSWORD" -Q "IF DB_ID(N'blogdesk_ci') IS NULL CREATE DATABASE blogdesk_ci" \
+                && docker exec ${{ job.services.mssql.id }} /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$DB_PASSWORD" -Q "CREATE LOGIN blogdesk_app WITH PASSWORD = N'Ci_App_Throwaway_1!', CHECK_POLICY = OFF" \
+                && docker exec ${{ job.services.mssql.id }} /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$DB_PASSWORD" -d blogdesk_ci -Q "CREATE USER blogdesk_app FOR LOGIN blogdesk_app; ALTER ROLE db_datareader ADD MEMBER blogdesk_app; ALTER ROLE db_datawriter ADD MEMBER blogdesk_app; GRANT EXECUTE TO blogdesk_app"
               exit $?
             fi
             sleep 2
@@ -83,8 +85,8 @@ jobs:
             "DB_SERVER=${DB_SERVER}" \
             "DB_PORT=${DB_PORT}" \
             "DB_DATABASE=${DB_DATABASE}" \
-            "DB_USER=${DB_USER}" \
-            "DB_PASSWORD=${DB_PASSWORD}" \
+            "DB_USER=blogdesk_app" \
+            "DB_PASSWORD=Ci_App_Throwaway_1!" \
             "DB_ENCRYPT=${DB_ENCRYPT}" \
             "DB_TRUST_SERVER_CERTIFICATE=${DB_TRUST_SERVER_CERTIFICATE}" \
             "ADMIN_EMAIL=admin@localhost.test" \
@@ -93,10 +95,19 @@ jobs:
             "APP_URL=http://localhost:3000" \
             > .env.local
       - name: Seed users
+        env:
+          DB_USER: blogdesk_app
+          DB_PASSWORD: "Ci_App_Throwaway_1!"
         run: pnpm seed:local
       - name: Build
+        env:
+          DB_USER: blogdesk_app
+          DB_PASSWORD: "Ci_App_Throwaway_1!"
         run: pnpm build
       - name: Start app
+        env:
+          DB_USER: blogdesk_app
+          DB_PASSWORD: "Ci_App_Throwaway_1!"
         run: |
           pnpm start > /tmp/app.log 2>&1 &
           for i in $(seq 1 60); do
@@ -104,6 +115,9 @@ jobs:
             sleep 2
           done
       - name: API smoke test
+        env:
+          DB_USER: blogdesk_app
+          DB_PASSWORD: "Ci_App_Throwaway_1!"
         run: pnpm smoke:local
       - name: App log on failure
         if: failure()
