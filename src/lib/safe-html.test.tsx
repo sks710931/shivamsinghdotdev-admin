@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 import { PostEditor } from "@/app/(desk)/posts/post-editor";
@@ -330,6 +330,7 @@ describe("PostEditor component rendering with XSS payloads", () => {
         <PostEditor
           mode="edit"
           role="admin"
+          userId="author-1"
           initialPost={{
             ...samplePost,
             bodyHtml: payload,
@@ -346,4 +347,48 @@ describe("PostEditor component rendering with XSS payloads", () => {
       expect(container.querySelectorAll("iframe").length).toBe(0);
     });
   }
+
+  it("sanitizes restored-from-local-storage HTML shown in preview through safeHtml", () => {
+    localStorage.clear();
+    const maliciousHtml = '<p>Restored body</p><script>alert("xss")</script><img src="x" onerror="alert(1)" /><a href="javascript:alert(2)">link</a>';
+    localStorage.setItem(
+      `pixel:draft:author-1:${samplePost.id}`,
+      JSON.stringify({
+        userId: "author-1",
+        postId: samplePost.id,
+        title: "Restored Title",
+        body: maliciousHtml,
+        savedAt: "2026-10-14T10:00:00.000Z", // newer than samplePost.updatedAt (09:30:00)
+        baseVersion: samplePost.version,
+      }),
+    );
+
+    const { container } = render(
+      <PostEditor
+        mode="edit"
+        role="admin"
+        userId="author-1"
+        initialPost={samplePost}
+      />,
+    );
+
+    // Restore banner is shown because snapshot is newer
+    const restoreBtn = screen.getByRole("button", { name: "Restore" });
+    fireEvent.click(restoreBtn);
+
+    // Click preview button to open dialog
+    const previewBtn = screen.getAllByRole("button", { name: "Preview" })[0];
+    fireEvent.click(previewBtn);
+
+    const previewBody = container.querySelector(".blog-preview-body");
+    expect(previewBody).not.toBeNull();
+    if (previewBody instanceof HTMLElement) {
+      assertNoExecutableArtifacts(previewBody);
+    }
+    expect(container.querySelectorAll("script").length).toBe(0);
+    expect(container.querySelectorAll("iframe").length).toBe(0);
+    expect(previewBody?.innerHTML).not.toContain("javascript:");
+    expect(previewBody?.innerHTML).not.toContain("onerror");
+    expect(previewBody?.innerHTML).toContain("Restored body");
+  });
 });

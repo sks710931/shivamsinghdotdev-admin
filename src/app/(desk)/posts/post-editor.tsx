@@ -23,6 +23,7 @@ import "prismjs/components/prism-sql";
 import "prismjs/components/prism-yaml";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { DraftRecoveryBanner } from "@/components/draft-recovery-banner";
 import { PostStatusBadge } from "@/components/post-status-badge";
 import type { UserRole } from "@/lib/directory";
 import { normalizeEditorHtml } from "@/lib/editor-html";
@@ -35,6 +36,7 @@ import {
   type PostDetail,
   type RevisionDetail,
 } from "@/lib/posts-client";
+import { useDraftRecovery } from "@/lib/use-draft-recovery";
 import { EditorActions, LiveUnchangedNotice } from "./editor-actions";
 import { PostMissing } from "./post-missing";
 import { RevisionReview } from "./revision-review";
@@ -208,6 +210,7 @@ function clearKeys(current: Record<string, string>, keys: string[]): Record<stri
 export function PostEditor({
   mode,
   role,
+  userId,
   initialPost,
   initialRevision = null,
   initialNotice = null,
@@ -215,6 +218,7 @@ export function PostEditor({
 }: {
   mode: "create" | "edit";
   role: UserRole;
+  userId: string;
   initialPost?: PostDetail;
   initialRevision?: RevisionDetail | null;
   initialNotice?: string | null;
@@ -241,6 +245,17 @@ export function PostEditor({
   const [blocksOpen, setBlocksOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [toolbar, setToolbar] = useState<ToolbarSnapshot>(defaultToolbar);
+  const [newDraftId] = useState(() => crypto.randomUUID());
+  const serverVersion = revision?.version ?? post?.version ?? null;
+  const serverUpdatedAt = revision?.updatedAt ?? post?.updatedAt ?? null;
+  const recovery = useDraftRecovery(
+    userId,
+    post?.id ?? "new:" + newDraftId,
+    fields.title,
+    fields.body,
+    serverVersion,
+    serverUpdatedAt,
+  );
   const editorRef = useRef<TinyMCEEditor | null>(null);
   const previewRef = useRef<HTMLDialogElement>(null);
   const dirty = canonical(fields) !== canonical(savedFields);
@@ -357,6 +372,7 @@ export function PostEditor({
         seoTitle: fields.seoTitle.trim(),
         bodyHtml,
       });
+      recovery.clear();
       let detail: PostDetail;
       try {
         detail = await api.getPost(created.id);
@@ -393,6 +409,7 @@ export function PostEditor({
       bodyHtml,
       ...(slugLocked ? {} : { slug: fields.slug.trim() }),
     });
+    recovery.clear();
     const nextFields = { ...fields, body: bodyHtml, slug: slugLocked ? post.slug : fields.slug.trim() };
 
     if (result.appliedTo === "pendingRevision") {
@@ -500,6 +517,7 @@ export function PostEditor({
             ...(force ? { force: true } : {}),
           })
         : await getPostsApi().publishPost(model.post.id, { version: model.post.version });
+      recovery.clear();
       const source = publishingRevision ?? model.post;
       const next: PostDetail = {
         ...model.post,
@@ -685,6 +703,23 @@ export function PostEditor({
         </div>
         <p className="mt-3 text-sm text-mist">Draft and edit content inline before publishing.</p>
       </header>
+
+      {recovery.pending ? (
+        <DraftRecoveryBanner
+          savedAt={recovery.pending.savedAt}
+          stale={recovery.pending.stale}
+          onRestore={() => {
+            const s = recovery.restore();
+            if (s) {
+              setFields((f) => ({ ...f, title: s.title, body: s.body }));
+              editorRef.current?.setContent(s.body);
+            }
+          }}
+          onDiscard={() => {
+            recovery.discard();
+          }}
+        />
+      ) : null}
 
       {actions.guestLiveBanner ? <LiveUnchangedNotice /> : null}
       {post?.status === "archived" ? (
