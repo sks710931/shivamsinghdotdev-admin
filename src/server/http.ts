@@ -60,3 +60,27 @@ export function authFailure(error: unknown): Response {
   console.error("Auth request failed", error instanceof Error ? error.name : "error");
   return json({ error: "Unable to complete the request." }, 500);
 }
+
+const DEFAULT_CODES: Record<number, string> = {
+  400: "validation",
+  401: "unauthorized",
+  403: "forbidden",
+  404: "not_found",
+  409: "conflict",
+  413: "payload_too_large",
+  415: "unsupported_media_type",
+  429: "rate_limited",
+};
+
+/** Maps an error to the contract v1.1 `{ error, code }` response shape. */
+export function apiError(error: unknown): Response {
+  if (error instanceof AuthError) {
+    return json(
+      { error: error.message, code: error.code ?? DEFAULT_CODES[error.status] ?? "error" },
+      error.status,
+    );
+  }
+
+  console.error("API request failed", error instanceof Error ? error.name : "error");
+  return json({ error: "Unable to complete the request.", code: "internal" }, 500);
+}

@@ -2,7 +2,9 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import { getCurrentUser } from "@/server/auth";
+import type { AdminUser } from "@/server/auth";
+
+export type PostActor = Pick<AdminUser, "id" | "role">;
 import { AuthError } from "@/server/auth-error";
 import { sql, query } from "@/server/db";
 
@@ -152,9 +154,10 @@ function flag(value: unknown): boolean {
   return value === true || value === 1 || value === "1";
 }
 
-export async function listPosts(): Promise<BlogPostListItem[]>;
-export async function listPosts(options: ListPostsOptions): Promise<{ items: BlogPostListItem[]; total: number }>;
+export async function listPosts(actor: PostActor): Promise<BlogPostListItem[]>;
+export async function listPosts(actor: PostActor, options: ListPostsOptions): Promise<{ items: BlogPostListItem[]; total: number }>;
 export async function listPosts(
+  actor: PostActor,
   options?: ListPostsOptions,
 ): Promise<BlogPostListItem[] | { items: BlogPostListItem[]; total: number }> {
   await ensurePostSchema();
@@ -169,8 +172,7 @@ export async function listPosts(
     options?.status === "draft" || options?.status === "published" || options?.status === "archived"
       ? options.status
       : undefined;
-  const viewer = await getCurrentUser();
-  const authorId = viewer?.role === "guest" ? viewer.id : options?.authorId || undefined;
+  const authorId = actor.role === "guest" ? actor.id : options?.authorId || undefined;
   const pending = options?.pending;
 
   const filters: string[] = [];
@@ -310,9 +312,8 @@ export type BlogPostDetail = {
   version: string; updatedAt: string; publishedAt: string | null;
 };
 
-export async function getPostById(id: string): Promise<BlogPostDetail | null> {
-  const viewer = await getCurrentUser();
-  if (!viewer) return null;
+export async function getPostById(actor: PostActor, id: string): Promise<BlogPostDetail | null> {
+  const guestOnly = actor.role === "guest";
   const result = await query<Record<string, unknown>>(
     `SELECT p.Id AS id, p.Title AS title, p.Slug AS slug, p.Summary AS summary, p.Tags AS tags,
        p.SeoKeywords AS seoKeywords, p.SeoTitle AS seoTitle, p.BodyHtml AS bodyHtml, p.Status AS status,
@@ -321,15 +322,17 @@ export async function getPostById(id: string): Promise<BlogPostDetail | null> {
        CASE WHEN ${PENDING_REVISION} THEN 1 ELSE 0 END AS hasPendingRevision
      FROM dbo.BlogPost AS p
      INNER JOIN dbo.AdminUser AS u ON u.Id = p.AuthorId
-     WHERE p.Id = @id`,
+     WHERE p.Id = @id${guestOnly ? " AND p.AuthorId = @actorId" : ""}`,
     (request) => {
       request.input("id", sql.UniqueIdentifier, id);
+      if (guestOnly) {
+        request.input("actorId", sql.UniqueIdentifier, actor.id);
+      }
     },
   );
   const row = result.recordset[0];
   if (!row) return null;
   const authorId = String(field(row, "authorId") ?? "");
-  if (viewer.role === "guest" && authorId.toLowerCase() !== String(viewer.id).toLowerCase()) return null;
   const rv = field(row, "rowVersion");
   return {
     id: String(field(row, "id") ?? ""),

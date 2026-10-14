@@ -1,6 +1,6 @@
 import { requireUser } from "@/server/auth";
 import { AuthError } from "@/server/auth-error";
-import { assertSameOrigin, authFailure, json } from "@/server/http";
+import { apiError, assertSameOrigin, json } from "@/server/http";
 import { createPost, listPosts } from "@/server/posts";
 
 export const runtime = "nodejs";
@@ -33,29 +33,6 @@ type ParsedListQuery = {
   page: number;
   pageSize: number;
 };
-
-function codeForStatus(status: number): string {
-  switch (status) {
-    case 400:
-      return "validation";
-    case 401:
-      return "unauthorized";
-    case 403:
-      return "forbidden";
-    case 404:
-      return "not_found";
-    case 409:
-      return "conflict";
-    case 413:
-      return "payload_too_large";
-    case 415:
-      return "unsupported_media_type";
-    case 429:
-      return "rate_limited";
-    default:
-      return "error";
-  }
-}
 
 function readWholeNumber(
   raw: string | null,
@@ -148,7 +125,7 @@ export async function GET(request: Request) {
       );
     }
 
-    const posts = await listPosts({
+    const posts = await listPosts(user, {
       status: parsed.value.status,
       pending: parsed.value.pending,
       page: parsed.value.page,
@@ -157,11 +134,7 @@ export async function GET(request: Request) {
     });
     return json(posts);
   } catch (error) {
-    if (error instanceof AuthError) {
-      const status = error.status;
-      return json({ error: error.message, code: codeForStatus(status) }, status);
-    }
-    return authFailure(error);
+    return apiError(error);
   }
 }
 
@@ -172,6 +145,6 @@ export async function POST(request: Request) {
     const created = await createPost(user.id, await readPostJson(request));
     return json(created, 201);
   } catch (error) {
-    return authFailure(error);
+    return apiError(error);
   }
 }

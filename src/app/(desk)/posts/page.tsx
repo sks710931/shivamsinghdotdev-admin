@@ -21,7 +21,7 @@ export default async function PostsPage() {
     redirect("/login");
   }
 
-  const posts = await listPosts();
+  const posts = await listPosts(user);
 
   return (
     <div className="flex flex-col gap-8">
