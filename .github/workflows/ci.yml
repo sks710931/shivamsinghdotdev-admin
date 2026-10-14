@@ -76,3 +76,35 @@ jobs:
         run: pnpm db:migrate
       - name: Migrate (second run, must be idempotent)
         run: pnpm db:migrate
+      - name: Write .env.local for smoke test
+        # throwaway CI-only values
+        run: |
+          printf '%s\n' \
+            "DB_SERVER=${DB_SERVER}" \
+            "DB_PORT=${DB_PORT}" \
+            "DB_DATABASE=${DB_DATABASE}" \
+            "DB_USER=${DB_USER}" \
+            "DB_PASSWORD=${DB_PASSWORD}" \
+            "DB_ENCRYPT=${DB_ENCRYPT}" \
+            "DB_TRUST_SERVER_CERTIFICATE=${DB_TRUST_SERVER_CERTIFICATE}" \
+            "ADMIN_EMAIL=admin@localhost.test" \
+            "ADMIN_PASSWORD=Ci_Admin_Throwaway_1!" \
+            "LOCAL_GUEST_PASSWORD=Ci_Guest_Throwaway_1!" \
+            "APP_URL=http://localhost:3000" \
+            > .env.local
+      - name: Seed users
+        run: pnpm seed:local
+      - name: Build
+        run: pnpm build
+      - name: Start app
+        run: |
+          pnpm start > /tmp/app.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf -o /dev/null http://localhost:3000/login && break
+            sleep 2
+          done
+      - name: API smoke test
+        run: pnpm smoke:local
+      - name: App log on failure
+        if: failure()
+        run: cat /tmp/app.log || true
