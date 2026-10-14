@@ -1016,6 +1016,22 @@ export function PostEditor({
             </div>
             <dl className="mt-4 space-y-3 border-t border-line pt-4 text-sm">
               <div className="flex items-center justify-between gap-3 text-mist">
+                <dt className="inline-flex items-center gap-2">Status</dt>
+                <dd>
+                  <PostStatusBadge status={post?.status ?? "draft"} />
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-mist">
+                <dt className="inline-flex items-center gap-2">Published date</dt>
+                <dd>
+                  {post?.publishedAt ? (
+                    <time dateTime={post.publishedAt}>{formatIstDateTime(post.publishedAt)}</time>
+                  ) : (
+                    "Not published"
+                  )}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-mist">
                 <dt className="inline-flex items-center gap-2">
                   <Clock3 className="h-3.5 w-3.5" strokeWidth={1.75} /> Last edited
                 </dt>
