@@ -27,7 +27,6 @@ import {
   type PublishRevisionInput,
   type RevisionDetail,
   type RevisionMutationInput,
-  type UnpublishPostResult,
 } from "@/lib/posts-client";
 
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -482,7 +481,7 @@ export const mockPostsApi: PostsApi = {
     return { version: post.version, publishedAt: now };
   },
 
-  async unpublishPost(id: string, input: RevisionMutationInput): Promise<UnpublishPostResult> {
+  async unpublishPost(id: string, input: RevisionMutationInput): Promise<PostDetail> {
     const post = requirePost(id);
     if (post.status === "archived") {
       throw new ApiError({
@@ -491,15 +490,22 @@ export const mockPostsApi: PostsApi = {
         code: "archived",
       });
     }
+    if (post.status !== "published") {
+      throw new ApiError({
+        status: 409,
+        error: "Only a published post can be unpublished.",
+        code: "not_published",
+      });
+    }
     if (input.version !== post.version) {
       throw stale(post);
     }
     const now = new Date().toISOString();
     post.status = "draft";
-    post.publishedAt = null;
+    post.pendingRevision = null;
     post.updatedAt = now;
     post.version = bump(post.version);
-    return { version: post.version };
+    return clone(post);
   },
 
   async archivePost(id: string, input: RevisionMutationInput): Promise<void> {

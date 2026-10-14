@@ -226,6 +226,46 @@ describe("httpPostsApi", () => {
     const rejected: Parameters<typeof httpPostsApi.publishPost>[1] = { version: "4", force: true };
     expect(rejected.version).toBe("4");
   });
+
+  it("unpublishPost posts /api/posts/{id}/unpublish and parses the full post detail", async () => {
+    const rawPost = {
+      id: publishedId,
+      title: "Shipping the desk",
+      slug: "shipping-the-desk",
+      summary: "What is live today.",
+      tags: ["release"],
+      seoTitle: "Shipping the desk",
+      seoKeywords: ["desk"],
+      bodyHtml: "<p>Live introduction.</p>",
+      status: "draft",
+      authorId: "mock-author",
+      authorName: "Ada Admin",
+      createdAt: "2026-10-01T04:00:00.000Z",
+      updatedAt: "2026-10-14T12:00:00.000Z",
+      publishedAt: "2026-10-02T04:00:00.000Z",
+      version: "4",
+      pendingRevision: null,
+    };
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify(rawPost), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const result = await httpPostsApi.unpublishPost(publishedId, { version: "3" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/posts/${publishedId}/unpublish`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ version: "3" }),
+      }),
+    );
+    expect(result).toEqual(rawPost);
+    expect(result.publishedAt).toBe("2026-10-02T04:00:00.000Z");
+    expect(result.status).toBe("draft");
+    expect(result.pendingRevision).toBeNull();
+  });
 });
 
 describe("mockPostsApi", () => {
@@ -303,5 +343,23 @@ describe("mockPostsApi", () => {
     expect(pending.items[0]?.hasPendingRevision).toBe(true);
     const drafts = await mockPostsApi.listPosts({ status: "draft" });
     expect(drafts.items.every((item) => item.status === "draft")).toBe(true);
+  });
+
+  it("unpublishPost preserves publishedAt, sets status to draft, and clears pending revision", async () => {
+    const live = await mockPostsApi.getPost(publishedId);
+    expect(live.status).toBe("published");
+    expect(live.publishedAt).toBe("2026-10-02T04:00:00.000Z");
+    expect(live.pendingRevision).not.toBeNull();
+
+    const unpublished = await mockPostsApi.unpublishPost(publishedId, { version: live.version });
+    expect(unpublished.status).toBe("draft");
+    expect(unpublished.publishedAt).toBe("2026-10-02T04:00:00.000Z");
+    expect(unpublished.pendingRevision).toBeNull();
+    expect(unpublished.version).not.toBe(live.version);
+
+    const stored = await mockPostsApi.getPost(publishedId);
+    expect(stored.status).toBe("draft");
+    expect(stored.publishedAt).toBe("2026-10-02T04:00:00.000Z");
+    expect(stored.pendingRevision).toBeNull();
   });
 });
