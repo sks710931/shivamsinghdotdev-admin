@@ -1,12 +1,12 @@
-# Posts API Contract v1.2 Authorization & Gate-Test Matrix
+# Posts API Contract v1.2 / v1.2.1 Authorization & Gate-Test Matrix
 
-This document defines the authorization and gate-test matrix for the Posts API contract v1.2.
-Sources: `docs/api/posts-contract-v1.2.md` and `docs/decisions/ADR-0004-publish-workflow.md` (Gate tests 1–12) only.
+This document defines the authorization and gate-test matrix for the Posts API contract v1.2 and v1.2.1 additions.
+Sources: `docs/api/posts-contract-v1.2.md` (including `## v1.2.1`) and `docs/decisions/ADR-0004-publish-workflow.md` (Gate tests 1–12) only.
 Any rule, status, or error code not explicitly defined in these sources is marked as `unspecified in v1.2`.
 
 ---
 
-## 1. Security & Authorization Rules (v1.2)
+## 1. Security & Authorization Rules (v1.2 & v1.2.1)
 
 - **Admin-Only Routes & Id Invariance**:
   The five admin-only routes are:
@@ -18,30 +18,42 @@ Any rule, status, or error code not explicitly defined in these sources is marke
   
   On all five admin-only routes, the admin role check runs before any database read or lookup.
   Therefore, **admin-only routes return the same 403 `forbidden` for real and fake IDs alike** (with identical body `{ "error": "Forbidden.", "code": "forbidden" }`), leaving `BlogPost` unchanged.
-- **Anonymous (No Session) on Admin Routes**:
-  Anonymous requests (no session) to admin-only routes return HTTP status `401` (error code is unspecified in v1.2).
+- **Anonymous (No Session) on All Routes (v1.2.1)**:
+  An anonymous caller (no session) gets 401 `unauthorized` on every `/api/posts` route, before any ID check or database read.
+- **Guest ID Invariance & Existence Masking (v1.2.1)**:
+  For a guest, another user's post and a nonexistent ID both return 404 `not_found` with an identical body on `GET /api/posts/[id]`, `PATCH /api/posts/[id]`, and `GET /api/posts/[id]/revision`, so existence is not disclosed.
+- **PATCH Optimistic Concurrency & Stale Version (v1.2.1)**:
+  A stale version on `PATCH /api/posts/[id]` returns 409 `stale_version`, and the error body also includes the current `version` so the client can offer reload.
+- **Post Creation (POST /api/posts) (v1.2.1)**:
+  `POST /api/posts` always creates status `draft` and ignores any status in the body for every role, including admin; the only ways to go live are the ADR-0004 transition routes. Successful creation returns 201 with `id`, `slug`, and `version`.
 - **PATCH `force` Parameter**:
   The `force` parameter on `PATCH /api/posts/[id]` is restricted to admins. Any non-admin attempting `force` on `PATCH` receives `403` with code `forbidden`.
 - **Error Response Format**:
-  All errors follow the shape `{ error: string, code: string }`.
+  All errors follow the shape `{ error: string, code: string }` (on 409 `stale_version`, the body also includes `version`).
 
 ---
 
 ## 2. Authorization Matrix by Route & Method
 
-| Method | Route / Path | Who (v1.2 Contract) | Anonymous Status | Anonymous Error Code | Guest Status | Guest Error Code | Admin Status | Admin Error Code |
+| Method | Route / Path | Who (v1.2 / v1.2.1 Contract) | Anonymous Status | Anonymous Error Code | Guest Status | Guest Error Code | Admin Status | Admin Error Code |
 |---|---|---|---|---|---|---|---|---|
-| `GET` | `/api/posts/[id]` | any (guest: own posts) | unspecified in v1.2 | unspecified in v1.2 | `200` (own post)<br>*(other's post / fake ID: unspecified in v1.2)* | None (success)<br>*(other's post / fake ID: unspecified in v1.2)* | `200`<br>*(fake ID: unspecified in v1.2)* | None (success)<br>*(fake ID: unspecified in v1.2)* |
-| `PATCH` | `/api/posts/[id]` | any (guest: own posts) | unspecified in v1.2 | unspecified in v1.2 | `200` (own post without `force`)<br>`403` (if guest passes `force`)<br>*(other's post / fake ID / stale version: unspecified in v1.2)* | None (success)<br>`forbidden` (with `force`)<br>*(other's post / fake ID / stale version: unspecified in v1.2)* | `200`<br>*(fake ID / stale version: unspecified in v1.2)* | None (success)<br>*(fake ID / stale version: unspecified in v1.2)* |
-| `GET` | `/api/posts/[id]/revision` | any (guest: own posts) | unspecified in v1.2 | unspecified in v1.2 | `200` (own post)<br>*(other's post / fake ID / missing revision: unspecified in v1.2)* | None (success)<br>*(other's post / fake ID / missing revision: unspecified in v1.2)* | `200`<br>*(fake ID / missing revision: unspecified in v1.2)* | None (success)<br>*(fake ID / missing revision: unspecified in v1.2)* |
-| `DELETE` | `/api/posts/[id]/revision` | admin | `401` | unspecified in v1.2 | `403` (same for real & fake ID) | `forbidden` | `200` (success)<br>*(stale version / fake ID: unspecified in v1.2)* | None (success)<br>*(stale version / fake ID: unspecified in v1.2)* |
-| `POST` | `/api/posts/[id]/publish` | admin | `401` | unspecified in v1.2 | `403` (same for real & fake ID) | `forbidden` | `200` (draft success)<br>`409` (not draft)<br>`409` (archived)<br>*(fake ID / stale version: unspecified in v1.2)* | None (success)<br>`not_draft`<br>`archived`<br>*(fake ID / stale version: unspecified in v1.2)* |
-| `POST` | `/api/posts/[id]/revision/publish` | admin | `401` | unspecified in v1.2 | `403` (same for real & fake ID) | `forbidden` | `200` (success)<br>`409` (not published)<br>`409` (revision stale: RowVersion or BaseVersion mismatch)<br>`409` (archived, even with force)<br>`409` (slug taken)<br>*(fake ID: unspecified in v1.2)* | None (success)<br>`not_published`<br>`revision_stale`<br>`archived`<br>`slug_taken`<br>*(fake ID: unspecified in v1.2)* |
-| `POST` | `/api/posts/[id]/unpublish` | admin | `401` | unspecified in v1.2 | `403` (same for real & fake ID) | `forbidden` | `200` (success)<br>`409` (not published)<br>*(fake ID / stale version: unspecified in v1.2)* | None (success)<br>`not_published`<br>*(fake ID / stale version: unspecified in v1.2)* |
-| `POST` | `/api/posts/[id]/archive` | admin | `401` | unspecified in v1.2 | `403` (same for real & fake ID) | `forbidden` | `200` (success)<br>*(fake ID / stale version: unspecified in v1.2)* | None (success)<br>*(fake ID / stale version: unspecified in v1.2)* |
+| `GET` | `/api/posts` | any (guest: own posts) | `401` | `unauthorized` | `200` (own posts) | None (success) | `200` | None (success) |
+| `POST` | `/api/posts` | any | `401` | `unauthorized` | `201` (always draft, status ignored) | None (success) | `201` (always draft, status ignored) | None (success) |
+| `GET` | `/api/posts/[id]` | any (guest: own posts) | `401` | `unauthorized` | `200` (own post)<br>`404` (other's post or fake ID, identical body) | None (success)<br>`not_found` (other's post or fake ID) | `200`<br>*(fake ID: unspecified in v1.2)* | None (success)<br>*(fake ID: unspecified in v1.2)* |
+| `PATCH` | `/api/posts/[id]` | any (guest: own posts) | `401` | `unauthorized` | `200` (own post without `force`)<br>`403` (if guest passes `force`)<br>`404` (other's post or fake ID, identical body)<br>`409` (stale version, current version in body) | None (success)<br>`forbidden` (with `force`)<br>`not_found` (other's post or fake ID)<br>`stale_version` (stale version) | `200`<br>`409` (stale version, current version in body)<br>*(fake ID: unspecified in v1.2)* | None (success)<br>`stale_version`<br>*(fake ID: unspecified in v1.2)* |
+| `GET` | `/api/posts/[id]/revision` | any (guest: own posts) | `401` | `unauthorized` | `200` (own post)<br>`404` (other's post or fake ID, identical body)<br>*(missing revision: unspecified in v1.2)* | None (success)<br>`not_found` (other's post or fake ID)<br>*(missing revision: unspecified in v1.2)* | `200`<br>*(fake ID / missing revision: unspecified in v1.2)* | None (success)<br>*(fake ID / missing revision: unspecified in v1.2)* |
+| `DELETE` | `/api/posts/[id]/revision` | admin | `401` | `unauthorized` | `403` (same for real & fake ID) | `forbidden` | `200` (success)<br>*(stale version / fake ID: unspecified in v1.2)* | None (success)<br>*(stale version / fake ID: unspecified in v1.2)* |
+| `POST` | `/api/posts/[id]/publish` | admin | `401` | `unauthorized` | `403` (same for real & fake ID) | `forbidden` | `200` (draft success)<br>`409` (not draft)<br>`409` (archived)<br>*(fake ID / stale version: unspecified in v1.2)* | None (success)<br>`not_draft`<br>`archived`<br>*(fake ID / stale version: unspecified in v1.2)* |
+| `POST` | `/api/posts/[id]/revision/publish` | admin | `401` | `unauthorized` | `403` (same for real & fake ID) | `forbidden` | `200` (success)<br>`409` (not published)<br>`409` (revision stale: RowVersion or BaseVersion mismatch)<br>`409` (archived, even with force)<br>`409` (slug taken)<br>*(fake ID: unspecified in v1.2)* | None (success)<br>`not_published`<br>`revision_stale`<br>`archived`<br>`slug_taken`<br>*(fake ID: unspecified in v1.2)* |
+| `POST` | `/api/posts/[id]/unpublish` | admin | `401` | `unauthorized` | `403` (same for real & fake ID) | `forbidden` | `200` (success)<br>`409` (not published)<br>*(fake ID / stale version: unspecified in v1.2)* | None (success)<br>`not_published`<br>*(fake ID / stale version: unspecified in v1.2)* |
+| `POST` | `/api/posts/[id]/archive` | admin | `401` | `unauthorized` | `403` (same for real & fake ID) | `forbidden` | `200` (success)<br>*(fake ID / stale version: unspecified in v1.2)* | None (success)<br>*(fake ID / stale version: unspecified in v1.2)* |
 | `DELETE` | `/api/posts/[id]` | removed in v1.2 (use `/archive`) | unspecified in v1.2 | unspecified in v1.2 | unspecified in v1.2 | unspecified in v1.2 | unspecified in v1.2 | unspecified in v1.2 |
 
 *Note on admin-only routes*: All 5 admin-only endpoints (`DELETE /api/posts/[id]/revision`, `POST /api/posts/[id]/publish`, `POST /api/posts/[id]/revision/publish`, `POST /api/posts/[id]/unpublish`, `POST /api/posts/[id]/archive`) check the role prior to any database read, ensuring a guest receives the exact same 403 `forbidden` status and body whether the ID exists (real) or does not exist (fake).
+
+*Note on guest existence masking (v1.2.1)*: On `GET /api/posts/[id]`, `PATCH /api/posts/[id]`, and `GET /api/posts/[id]/revision`, accessing another user's post or a nonexistent ID returns 404 `not_found` with an identical body, so existence is not disclosed.
+
+*Note on anonymous access (v1.2.1)*: An anonymous caller (no session) receives 401 `unauthorized` on every `/api/posts` route before any ID check or database read.
 
 ---
 
@@ -66,14 +78,26 @@ Each gate test from ADR-0004 is mapped below to the route(s) it exercises and th
 
 ---
 
-## 4. Error Code Reference (Contract v1.2 & ADR-0004)
+## 4. v1.2.1 Gate Tests
+
+The following gate tests are introduced by contract v1.2.1:
+
+- **Cross-user 404 indistinguishable from fake id**: For a guest, requesting another user's post or a nonexistent ID both return 404 `not_found` with an identical body on `GET /api/posts/[id]`, `PATCH /api/posts/[id]`, and `GET /api/posts/[id]/revision`, ensuring post existence is not disclosed.
+- **Admin create with status published still yields draft**: `POST /api/posts` always creates a post with status `draft` and ignores any `status` in the body for every role, including admin (ADR-0004 transition routes remain the only way to publish).
+- **Stale PATCH returns 409 with version**: A stale version on `PATCH /api/posts/[id]` returns 409 `stale_version`, and the error body includes the current `version` so clients can offer reload.
+
+---
+
+## 5. Error Code Reference (Contract v1.2, v1.2.1 & ADR-0004)
 
 | Status | Code | Condition / When | Source |
 |---|---|---|---|
-| 401 | unspecified in v1.2 | Request without session on admin-only endpoints (`requireAdmin`) | ADR-0004 §Context / Gate test 1 |
+| 401 | `unauthorized` | Anonymous request (no session) on every `/api/posts` route (checked before ID check or DB read) | Contract v1.2.1 |
 | 403 | `forbidden` | Non-admin on any admin-only endpoint, or non-admin passing `force` on `PATCH` | Contract v1.2 / ADR-0004 Gate tests 1, 10 |
+| 404 | `not_found` | Guest requesting another user's post or a nonexistent ID on `GET /api/posts/[id]`, `PATCH /api/posts/[id]`, or `GET /api/posts/[id]/revision` (identical body) | Contract v1.2.1 |
 | 409 | `not_draft` | `POST /api/posts/[id]/publish` on a post that is not a draft | Contract v1.2 |
 | 409 | `not_published` | `POST /api/posts/[id]/unpublish` or `POST /api/posts/[id]/revision/publish` on a post that is not published | Contract v1.2 |
 | 409 | `slug_taken` | `POST /api/posts/[id]/revision/publish` when another post took the revision's slug | Contract v1.2 |
+| 409 | `stale_version` | `PATCH /api/posts/[id]` when request version is stale (response body includes current `version`) | Contract v1.2.1 |
 | 409 | `revision_stale` | `POST /api/posts/[id]/revision/publish` when request version != revision RowVersion, or when revision BaseVersion != live BlogPost.RowVersion (without admin `force: true` on a published post) | Contract v1.2 / ADR-0004 §Decision 3 / Gate tests 4, 12 |
 | 409 | `archived` | `POST /api/posts/[id]/publish` or `POST /api/posts/[id]/revision/publish` on an archived post (even with `force`) | Contract v1.2 / ADR-0004 §Decision 1, 3 / Gate tests 7, 12 |
